@@ -914,7 +914,7 @@ test("quick help exposes the calculator's number and interval surfaces", () => {
     const repl = createRixRepl();
     const intervalHelp = repl.run('.Help("interval")');
     const scientificHelp = repl.run('.Help("scientific")');
-    expect(intervalHelp.groups.flatMap(({ items }) => items).map(([syntax]) => syntax)).toContain("Explore interval");
+    expect(intervalHelp.groups.flatMap(({ items }) => items).map(([syntax]) => syntax)).toContain("Explore exact value");
     expect(scientificHelp.groups.flatMap(({ items }) => items).map(([syntax]) => syntax)).toContain('*> "sci[10]"');
 });
 

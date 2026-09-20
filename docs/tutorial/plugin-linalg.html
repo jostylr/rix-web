@@ -108,4 +108,100 @@ rebuilt := view.Reconstruct();
   .linalg.Serialize(view),
   .linalg.Serialize(view[:vector])
 };</textarea><div class="tutorial-output" data-tutorial-output></div></section>
-<p>The coefficients are <code>[3,2,1,0]</code> in the monomial Frame, but <code>p</code> remains a callable Polynomial with Polynomial arithmetic. Serialized records contain stable IDs and data rather than the cyclic in-memory lineage graph.</p></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>
+<p>The coefficients are <code>[3,2,1,0]</code> in the monomial Frame, but <code>p</code> remains a callable Polynomial with Polynomial arithmetic. Serialized records contain stable IDs and data rather than the cyclic in-memory lineage graph.</p>
+<h2>Choose a dual Frame explicitly</h2>
+<section class="comparison-code"><header>{.rix exec=true id=finite-dual-frame}</header><pre><code>.Plugin.Load(&quot;linalg&quot;);
+space := .linalg.VectorSpace(&quot;dual example&quot;,2);
+e := .linalg.Frame(space,&quot;e&quot;,:defining);
+chosen := e.Dual(&quot;chosen dual&quot;,[1,1;0,1]);
+x := .linalg.Vector([2,3],e);
+alpha := .linalg.Vector([4,5],chosen);
+alpha.Pair(x) ##@ == 33
+{: alpha.__type,alpha.Pair(x),alpha==.linalg.Covector([9,5],e),
+   e.Dual().Dual()[:frameidentity]==e[:frameidentity] };</code></pre></section>
+<p>The pairing is <code>33</code>. A dual basis changes coordinates by inverse transpose; no metric is needed to pair a Covector with a Vector.</p>
+<h2>Raise and lower indices with a metric</h2>
+<section class="comparison-code"><header>{.rix exec=true id=finite-metric}</header><pre><code>.Plugin.Load(&quot;linalg&quot;);
+space := .linalg.VectorSpace(&quot;metric example&quot;,2);
+e := .linalg.Frame(space,&quot;e&quot;,:defining);
+f := .linalg.Frame(space,{= relativeTo=e,basis=[1,1;0,1] });
+metric := .linalg.Metric(e,[2,1;1,3]);
+x := .linalg.Vector([2,3],e);
+alpha := x.Lower(metric);
+x.NormSquared(metric) ##@ == 47
+alpha.Raise(metric)==x ##@ == 1
+{=
+  covector=alpha.components,
+  recovered=alpha.Raise(metric)==x,
+  squaredNorm=x.NormSquared(metric),
+  invariant=x.Transform(f).Lower(metric.Transform(f))==alpha.Transform(f)
+};</code></pre></section>
+<p>The metric is part of the operation, not a consequence of choosing coordinates. It must be exact, symmetric and nonsingular. <code>Norm</code> and <code>Angle</code> additionally require positive definiteness and report unsupported coefficient extensions when a result is not Rational.</p>
+<h2>Project symmetry and distinguish components from tensor views</h2>
+<section class="comparison-code"><header>{.rix exec=true id=finite-symmetry}</header><pre><code>.Plugin.Load(&quot;linalg&quot;);
+space := .linalg.VectorSpace(&quot;tensor example&quot;,2);
+e := .linalg.Frame(space,&quot;e&quot;,:defining);
+t := .linalg.Tensor([1,2;3,4],[e,e]);
+symmetric := t.Symmetrize();
+antisymmetric := t.Antisymmetrize();
+symmetric+antisymmetric==t ##@ == 1
+{: symmetric.components,antisymmetric.components,symmetric+antisymmetric==t,
+   t.Permute([2,1]).components,t.View().SameTensor(t),t.ComponentSlice({: 1,1:2}) };</code></pre></section>
+<p>The full view preserves identity. The slot permutation is a new derived tensor. The component slice is Shaped storage, since selecting coordinates generally fails to commute with a change of Frame.</p>
+<section class="comparison-code"><header>{.rix exec=true id=finite-trace-power}</header><pre><code>.Plugin.Load(&quot;linalg&quot;);
+space := .linalg.VectorSpace(&quot;trace example&quot;,2);
+e := .linalg.Frame(space,&quot;e&quot;,:defining);
+x := .linalg.Vector([2,3],e);
+alpha := .linalg.Covector([4,5],e);
+x.TensorProduct(alpha).Trace() ##@ == 23
+{: x.TensorProduct(alpha).Trace(),x.TensorPower(2).components,x.TensorPower(0) };</code></pre></section>
+<p>The trace is <code>23</code>. Same-variance traces require an explicit metric. Symmetry and tensor powers enforce finite work budgets before expanding coordinates.</p>
+<h2>Save and reconstruct a domain-linked graph</h2>
+<p>A graph carries the Polynomial source, its explicitly chosen ambient space, and every Frame needed by its coordinate view. Repeated references remain shared within an import, and a second import receives independent identities.</p>
+<section class="comparison-code"><header>{.rix exec=true id=identity-graph-realizations}</header><pre><code>.Plugin.Load(&quot;linalg&quot;);
+small := .linalg.PolynomialSpace(2,:x);
+large := .linalg.PolynomialSpace(4,:x);
+source := .p`x^2+2*x+3`;
+a := small.Realize(source);
+b := large.Realize(source);
+saved := .MathEncodeJSON(.linalg.ExportGraph([source,a,b]));
+loaded := .linalg.ImportGraph(.MathDecodeJSON(saved));
+loaded[2].SameSource(loaded[3]) ##@ == 1
+loaded[2].Vector().SameTensor(loaded[3].Vector()) ##@ == _
+loaded[2].Reconstruct()==loaded[1] ##@ == 1
+loaded[1].__type ##@ == &quot;Polynomial&quot;</code></pre></section>
+<p>The first and third results are true, the second is <code>_</code>, and the final type is <code>Polynomial</code>. Use <code>SameSource</code> for domain provenance and <code>SameTensor</code> for the abstract tensor identity. Imported sources are frozen coefficient snapshots; they retain no provider closure or reactive subscription. Invalid references, contradictory coordinates and budget overruns are rejected before results are returned. See the README for graph limits and finite storage protocols.</p>
+<h2>Exact spectral information without a field extension</h2>
+<section class="comparison-code"><header>{.rix exec=true id=rational-spectral-tutorial}</header><pre><code>.Plugin.Load(&quot;linalg&quot;);
+matrix := [1/2,1;0,2/3] ~!: :Matrix;
+spectral := matrix.RationalEigenspaces();
+spectral.CharacteristicPolynomial().Coefficients().All((entry,index)-&gt;entry==[1,-7/6,1/3][index]) ##@ == 1
+spectral.Roots().All((entry,index)-&gt;entry==[1/2,2/3][index]) ##@ == 1
+spectral.Verify() ##@ == 1
+rotation := .linalg.RationalEigenspaces([0,-1;1,0]);
+rotation.Roots().Len() ##@ == 0
+rotation[:canonicalforms][:extensionfieldrequired] ##@ == 1</code></pre></section>
+<p>The rotation has characteristic polynomial <code>x^2+1</code> and no Rational eigenvalue. RiX records the need for a coefficient extension; it does not manufacture a Jordan basis over Q. An incomplete bounded root search reports <code>?</code> for claims it has not decided.</p>
+<h2>Finite support in a countable polynomial space</h2>
+<section class="comparison-code"><header>{.rix exec=true id=finite-support-tutorial}</header><pre><code>.Plugin.Load(&quot;linalg&quot;);
+polynomials := .linalg.PolynomialSpace(:unbounded);
+small := polynomials.Bounded(2);
+p := .p`x^5+3*x^2+2`;
+r := polynomials.Realize(p);
+r.Vector().components.SupportSize() ##@ == 3
+r.Reconstruct()==p ##@ == 1
+projected := small.Project(r);
+projected.Verify() ##@ == 1
+projected.Vector().components[1] ##@ == 2
+projected.Vector().components[2] ##@ == 0
+projected.Vector().components[3] ##@ == 3
+polynomials.Include(projected.Realization()).Reconstruct()+projected.Remainder()==p ##@ == 1
+saved := .MathEncodeJSON(r.Vector().components.Record());
+.linalg.RestoreCoordinates(.MathDecodeJSON(saved)).Verify() ##@ == 1</code></pre></section>
+<p>The countable Frame supplies monomials by nonnegative degree; every value has finite support. The bounded projection keeps degrees zero through two and reports the exact discarded term <code>x^5</code>. Sparse tensor products combine ordered coordinate slots with explicit support budgets. They do not create multivariate Polynomials or infinite series.</p>
+<h2>Finite sparse matrix application</h2>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;linalg&quot;);
+matrix = .linalg.SparseCoordinates([{= indices=[1,2], value=1/3 }], [1000,1000]);
+vector = .linalg.SparseCoordinates([{= indices=[2], value=6 }], [1000]);
+image = matrix.Apply(vector);
+[image.Get([1]), image.SupportSize(), image.Verify()]; ## [2,1,1], no dense expansion</textarea><div class="tutorial-output" data-tutorial-output></div></section></div><nav class="lesson-navigation" aria-label="Lesson navigation" data-tutorial-page-navigation><span class="previous-link"></span><span class="section-links"><a href="./index.html">Tutorial index</a></span><span class="next-link"></span></nav><footer class="lesson-footer">Every RiX cell above runs in this page. Cells share state within an h2 topic; each new h2 starts fresh. <a href="../">Open a fresh RatCalc session →</a></footer></article><aside id="tutorial-docs-panel" class="tutorial-docs-panel" aria-label="RiX documentation" hidden><header><span id="tutorial-docs-title">RiX documentation</span><div><a id="tutorial-docs-external" href="https://docs.rix.ratmath.com/" target="_blank" rel="noreferrer">Open in new tab</a><button type="button" data-close-tutorial-docs aria-label="Close documentation">×</button></div></header><iframe id="tutorial-docs-frame" src="https://docs.rix.ratmath.com/" title="RiX documentation"></iframe></aside></div></div></main><dialog id="object-help-dialog" class="object-help-dialog"></dialog><script type="module" src="../assets/tutorial-runner.js"></script></body></html>

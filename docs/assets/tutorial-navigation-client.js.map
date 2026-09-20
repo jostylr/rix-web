@@ -4,7 +4,7 @@
   "sourcesContent": [
     "import { mountTutorialNavigation } from \"./tutorial-navigation.js\";\n\nmountTutorialNavigation();\n"
   ],
-  "mappings": ";;;;;AAEA,wBAAwB;",
-  "debugId": "E339D7582E19FB6E64756E2164756E21",
+  "mappings": ";;;;;;AAEA,wBAAwB;",
+  "debugId": "719B6923F961167F64756E2164756E21",
   "names": []
 }

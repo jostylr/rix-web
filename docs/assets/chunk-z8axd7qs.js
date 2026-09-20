@@ -12,11 +12,13 @@ import {
   createDefaultSystemContext,
   createHoldControl,
   createInputControl,
+  createOutputBundleHost,
   createRangeControl,
   createResetControl,
   createSliderControl,
   createToggleControl,
   disposeAsyncResources,
+  exactExplorationInterval,
   formatOutputText,
   formatValue,
   formatValueSource,
@@ -43,12 +45,14 @@ import {
   isOutputValue,
   isReactiveNode,
   outputValueKind,
+  parse,
   parseAndEvaluate,
   parseAndEvaluateObserved,
   parseAndEvaluateObservedAsync,
   renderOutputHtml,
-  tokenize
-} from "./chunk-e0xf4pd3.js";
+  tokenize,
+  traceExactArithmetic
+} from "./chunk-f4fq1e6m.js";
 
 // standard-profile.rix
 var standard_profile_default = `## RiX-Web standard calculator profile.
@@ -3040,17 +3044,17 @@ analysisNamespace._proto = {=
     ["Analysis","Calculus","Exact"]
 );
 `, sourcePath: "bundled:analysis", kind: "rix" });
-  catalog.addMetadata({ id: "ball", description: "Certified real and complex rational balls with precision-negotiated elementary functions.", kind: "rix", mount: "ball", exports: ["Ball", "Interval", "Sqrt", "NthRoot", "Cbrt", "Exp", "Log", "Sin", "Cos", "Tan", "Complex", "ComplexParts", "Midpoint", "Radius", "Lower", "Upper", "Contains", "RoundOut", "Record"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.ball@1", "rix.complex-ball@1", "rix.enclosable-real@1"], schemas: ["rix.ball@1", "rix.ball.nested-real@1", "rix.ball.function-real@1", "rix.ball.arithmetic-real@1", "rix.ball.complex@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ball" }, { source: `/**
+  catalog.addMetadata({ id: "ball", description: "Certified real and complex rational balls with precision-negotiated elementary functions.", kind: "rix", mount: "ball", exports: ["Ball", "Interval", "Sqrt", "NthRoot", "Cbrt", "Exp", "Log", "Sin", "Cos", "Tan", "Complex", "ComplexParts", "Midpoint", "Radius", "Lower", "Upper", "Contains", "RoundOut", "Record", "Polynomial", "DerivativeBound", "LinearSolve"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.ball@1", "rix.complex-ball@1", "rix.enclosable-real@1"], schemas: ["rix.ball@1", "rix.ball.nested-real@1", "rix.ball.function-real@1", "rix.ball.arithmetic-real@1", "rix.ball.complex@1", "rix.ball.polynomial-bound@1", "rix.ball.validated-linear@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ball" }, { source: `/**
 id: ball
 description: Certified real and complex rational balls with precision-negotiated elementary functions.
 kind: rix
 mount: ball
-exports: [Ball, Interval, Sqrt, NthRoot, Cbrt, Exp, Log, Sin, Cos, Tan, Complex, ComplexParts, Midpoint, Radius, Lower, Upper, Contains, RoundOut, Record]
+exports: [Ball, Interval, Sqrt, NthRoot, Cbrt, Exp, Log, Sin, Cos, Tan, Complex, ComplexParts, Midpoint, Radius, Lower, Upper, Contains, RoundOut, Record, Polynomial, DerivativeBound, LinearSolve]
 groups: [Numerics, Exact]
 permissions: []
 requires: [rix.numerics@1]
 provides: [rix.ball@1, rix.complex-ball@1, rix.enclosable-real@1]
-schemas: [rix.ball@1, rix.ball.nested-real@1, rix.ball.function-real@1, rix.ball.arithmetic-real@1, rix.ball.complex@1]
+schemas: [rix.ball@1, rix.ball.nested-real@1, rix.ball.function-real@1, rix.ball.arithmetic-real@1, rix.ball.complex@1, rix.ball.polynomial-bound@1, rix.ball.validated-linear@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -3590,6 +3594,53 @@ ComplexBallRecord(value) -> {;
 
 .TypeInstall(:Ball);
 
+BallPolynomialCoefficients(coefficients) ?!- [
+    coefficients.Len() >= 1 ?_> .Error("Ball polynomial requires at least one coefficient"),
+    coefficients.Len() <= 257 ?_> .Error("Ball polynomial degree must not exceed 256")
+] -> coefficients.Map(coefficient -> BallRequireRational(coefficient,"Ball polynomial coefficient"));
+
+BallPolynomial(coefficients, value) -> {;
+    exact = BallPolynomialCoefficients(coefficients);
+    argument = value ? :RationalInterval ?: value ?_ BallPromote(value).Interval();
+    result := exact[1]:exact[1];
+    {@ index=2; index<=@exact.Len(); {;
+        @result ~= @result*@argument+@exact[index];
+    }; index+=1 };
+    BallFromInterval(result);
+};
+
+BallDerivativeBound(coefficients,value,order ?= 1) ?!- [
+    degree=BallRequireNonnegativeInteger(order,"Ball derivative order"),
+    degree <= 256 ?_> .Error("Ball derivative order must not exceed 256")
+] -> {;
+    original = BallPolynomialCoefficients(coefficients);
+    derived := original;
+    {@ step=1; step<=@degree; {;
+        next := [];
+        {@ index=1; index<@derived.Len(); {;
+            @next ~= @next.Push(@derived[index]*(@derived.Len()-index));
+        }; index+=1 };
+        @derived ~= next.Len()==0 ?: [0] ?_ next;
+    }; step+=1 };
+    enclosure = BallPolynomial(derived,value);
+    interval = enclosure.Interval();
+    lowMagnitude = .Abs(interval.Low());
+    highMagnitude = .Abs(interval.High());
+    {= schema="rix.ball.polynomial-bound@1",certified=1,coefficients=original,
+        derivativeCoefficients=derived,order=degree,ball=enclosure,interval=interval,
+        absoluteBound=lowMagnitude>highMagnitude ?: lowMagnitude ?_ highMagnitude,
+        evidence={= method=:exactIntervalHorner,coefficientOrder=:descending }
+    };
+};
+
+BallValidatedLinearSolve(matrix,rhs,options ?= {= }) -> {;
+    linear = .numerics.IntervalLinearSolve(matrix,rhs,options);
+    {= schema="rix.ball.validated-linear@1",status=linear[:status],certified=linear[:certified],
+        solution=linear[:certified] ?: linear[:solution].Map(enclosure->BallFromInterval(enclosure)) ?_ _,
+        denotation=:allPointSystems,linear=linear,diagnostics=linear[:diagnostics]
+    };
+};
+
 ballNamespace = (midpoint, radius ?= 0) -> BallConstruct(midpoint, radius);
 ballNamespace._proto = {=
     Ball = (self, midpoint, radius ?= 0) -> BallConstruct(midpoint, radius),
@@ -3610,6 +3661,9 @@ ballNamespace._proto = {=
     Upper = (self, ball) -> BallRequire(ball)[:interval].High(),
     Contains = (self, ball, candidate) -> BallContains(ball, candidate),
     RoundOut = (self, ball, bits ?= 53) -> BallRoundOut(ball, bits),
+    Polynomial = (self, coefficients, value) -> BallPolynomial(coefficients,value),
+    DerivativeBound = (self, coefficients, value, order ?= 1) -> BallDerivativeBound(coefficients,value,order),
+    LinearSolve = (self, matrix, rhs, options ?= {= }) -> BallValidatedLinearSolve(matrix,rhs,options),
     Record = (self, value) -> value[:valueKind] == :ball ?: BallRecord(value) ?_ BallNestedRecord(value)
 };
 
@@ -3659,16 +3713,16 @@ besselNamespace._proto = {=
     ["Numerics", "SpecialFunctions"]
 );
 `, sourcePath: "bundled:bessel", kind: "rix" });
-  catalog.addMetadata({ id: "calculus", description: "Portable abstract functions, obligation-bearing higher differentiation, and provenance-recording evaluation through semantic-ID implementation links.", kind: "rix", mount: "calculus", exports: ["Function", "Exp", "Log", "Abs", "Sin", "Cos", "Atan", "Sqrt", "Asin", "ComplexLog", "Variable", "Constant", "Apply", "Obligation", "Register", "Resolve", "StructuralKey", "Evaluate", "EvaluateResult", "SimplifyResult", "CheckSimplification", "Differentiate", "DifferentiateResult", "DifferentiateN", "DifferentiateNResult", "Partial", "PartialResult", "Gradient", "GradientResult", "Jacobian", "JacobianResult", "Hessian", "HessianResult", "SelectedPrimitive", "AntiderivativeFamily", "DefiniteIntegral", "ToSpec", "FromSpec", "IsFunction", "IsExpression", "IsTransformation", "IsIntegral"], groups: ["Calculus", "Analysis", "Symbolic", "Exact"], permissions: [], provides: ["rix.calculus@1", "rix.abstract-function@1"], schemas: ["rix.calculus.function@1", "rix.calculus.expression@1", "rix.calculus.registry-entry@1", "rix.calculus.obligation@1", "rix.calculus.transformation@1", "rix.calculus.graph-simplification@1", "rix.calculus.evaluation@1", "rix.calculus.derivative-collection@1", "rix.calculus.integral@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:calculus" }, { source: `/**
+  catalog.addMetadata({ id: "calculus", description: "Portable abstract functions, obligation-bearing higher differentiation, and provenance-recording evaluation through semantic-ID implementation links.", kind: "rix", mount: "calculus", exports: ["DifferentialProblem", "BoundaryProblem", "IntegralEquation", "DerivativeDeclaration", "UseDeclaredDerivative", "Function", "Exp", "Log", "Abs", "Sin", "Cos", "Atan", "Sqrt", "Asin", "ComplexLog", "Variable", "Constant", "Apply", "Obligation", "Register", "Resolve", "StructuralKey", "Evaluate", "EvaluateResult", "SimplifyResult", "CheckSimplification", "Differentiate", "DifferentiateResult", "DifferentiateN", "DifferentiateNResult", "Partial", "PartialResult", "Gradient", "GradientResult", "Jacobian", "JacobianResult", "Hessian", "HessianResult", "SelectedPrimitive", "AntiderivativeFamily", "DefiniteIntegral", "ToSpec", "FromSpec", "IsFunction", "IsExpression", "IsTransformation", "IsIntegral"], groups: ["Calculus", "Analysis", "Symbolic", "Exact"], permissions: [], provides: ["rix.calculus@1", "rix.abstract-function@1"], schemas: ["rix.calculus.equation-problem@1", "rix.calculus.derivative-declaration@1", "rix.calculus.function@1", "rix.calculus.expression@1", "rix.calculus.registry-entry@1", "rix.calculus.obligation@1", "rix.calculus.transformation@1", "rix.calculus.graph-simplification@1", "rix.calculus.evaluation@1", "rix.calculus.derivative-collection@1", "rix.calculus.integral@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:calculus" }, { source: `/**
 id: calculus
 description: Portable abstract functions, obligation-bearing higher differentiation, and provenance-recording evaluation through semantic-ID implementation links.
 kind: rix
 mount: calculus
-exports: [Function, Exp, Log, Abs, Sin, Cos, Atan, Sqrt, Asin, ComplexLog, Variable, Constant, Apply, Obligation, Register, Resolve, StructuralKey, Evaluate, EvaluateResult, SimplifyResult, CheckSimplification, Differentiate, DifferentiateResult, DifferentiateN, DifferentiateNResult, Partial, PartialResult, Gradient, GradientResult, Jacobian, JacobianResult, Hessian, HessianResult, SelectedPrimitive, AntiderivativeFamily, DefiniteIntegral, ToSpec, FromSpec, IsFunction, IsExpression, IsTransformation, IsIntegral]
+exports: [DifferentialProblem, BoundaryProblem, IntegralEquation, DerivativeDeclaration, UseDeclaredDerivative, Function, Exp, Log, Abs, Sin, Cos, Atan, Sqrt, Asin, ComplexLog, Variable, Constant, Apply, Obligation, Register, Resolve, StructuralKey, Evaluate, EvaluateResult, SimplifyResult, CheckSimplification, Differentiate, DifferentiateResult, DifferentiateN, DifferentiateNResult, Partial, PartialResult, Gradient, GradientResult, Jacobian, JacobianResult, Hessian, HessianResult, SelectedPrimitive, AntiderivativeFamily, DefiniteIntegral, ToSpec, FromSpec, IsFunction, IsExpression, IsTransformation, IsIntegral]
 groups: [Calculus, Analysis, Symbolic, Exact]
 permissions: []
 provides: [rix.calculus@1, rix.abstract-function@1]
-schemas: [rix.calculus.function@1, rix.calculus.expression@1, rix.calculus.registry-entry@1, rix.calculus.obligation@1, rix.calculus.transformation@1, rix.calculus.graph-simplification@1, rix.calculus.evaluation@1, rix.calculus.derivative-collection@1, rix.calculus.integral@1]
+schemas: [rix.calculus.equation-problem@1, rix.calculus.derivative-declaration@1, rix.calculus.function@1, rix.calculus.expression@1, rix.calculus.registry-entry@1, rix.calculus.obligation@1, rix.calculus.transformation@1, rix.calculus.graph-simplification@1, rix.calculus.evaluation@1, rix.calculus.derivative-collection@1, rix.calculus.integral@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -4741,8 +4795,80 @@ CalculusRegister(calculusBuiltinComplexLog,{=
 });
 .TypeInstall(:MathematicalFunction);
 
+### Inert course equation problems and explicitly declared opaque derivatives.
+CalculusProblemName(value,label) -> {;
+    (value ? :String) && value.Len()>0 && value.Len()<=256 ?_> .Error(@"@{label} must be a nonempty bounded string");value;
+};
+CalculusProblemData(value) -> {; .ValidatedClaimEqual(value,value);value; };
+CalculusProblemInterval(value) -> {;
+    interval=value ~!: :RationalInterval;
+    CalculusProblemData(interval);
+    interval.Low()<=interval.High() ?_> .Error("Problem domain must be ordered");interval;
+};
+CalculusDifferentialProblem(rhs,variable,unknowns,options ?= {= }) -> {;
+    name=CalculusProblemName(variable,"Independent variable");
+    (rhs ? :Array) && rhs.Len()>=1 && rhs.Len()<=16 ?_> .Error("Differential rhs must contain 1..16 expressions");
+    (unknowns ? :Array) && unknowns.Len()==rhs.Len() ?_> .Error("Differential unknown names must match rhs");
+    _ := unknowns.Map(item->CalculusProblemName(item,"Unknown"));
+    unknowns.All(item->unknowns.Filter(other->other==item).Len()==1 && item!=name) ?_> .Error("Differential names must be distinct");
+    rhs.All(item->CalculusIsExpression(item)) ?_> .Error("Differential right-hand sides must be expression graphs");
+    order=CalculusOption(options,"order",1);(order ? :Integer) && order>=1 && order<=16 ?_> .Error("Differential order must be 1..16");
+    domain=CalculusOption(options,"domain",_);domain==_ ?: _ ?_ CalculusProblemInterval(domain);
+    CalculusProblemData([rhs,unknowns,options]);
+    .ImmutableValue({= schema="rix.calculus.equation-problem@1",kind=:differential,variable=name,unknowns=unknowns,rhs=rhs,order=order,
+       domain=domain,options=options,execution=:inert,verification=:unverified,solver=:ODEorNumerics });
+};
+CalculusBoundaryProblem(problem,conditions,options ?= {= }) -> {;
+    problem[:schema]=="rix.calculus.equation-problem@1" && problem[:kind]==:differential ?_> .Error("BoundaryProblem requires a differential specification");
+    expected=CalculusDifferentialProblem(problem[:rhs],problem[:variable],problem[:unknowns],problem[:options]);
+    .ValidatedClaimEqual(problem,expected) ?_> .Error("Altered differential problem");
+    (conditions ? :Array) && conditions.Len()>=1 && conditions.Len()<=32 ?_> .Error("Boundary conditions must contain 1..32 records");
+    _ := conditions.Map(condition->{;
+        CalculusIsExpression(condition[:expression]) ?_> .Error("Boundary residual must be an expression graph");
+        ((condition[:at] ? :Integer) || (condition[:at] ? :Rational)) ?_> .Error("Boundary location must be exact");
+        (problem[:domain]==_ || (condition[:at]>=problem[:domain].Low() && condition[:at]<=problem[:domain].High())) ?_> .Error("Boundary location is outside the declared domain");
+        [:eq,:le,:lt,:ge,:gt].Includes(CalculusOption(condition,"relation",:eq)) ?_> .Error("Unsupported boundary relation");
+    });
+    CalculusProblemData([problem,conditions,options]);
+    .ImmutableValue({= schema="rix.calculus.equation-problem@1",kind=:boundary,differential=problem,conditions=conditions,options=options,
+      residualConvention=:expressionComparedWithZero,execution=:inert,verification=:unverified,solver=:ODEorNumerics });
+};
+CalculusIntegralEquation(unknown,kernel,variable,lower,upper,forcing,options ?= {= }) -> {;
+    name=CalculusProblemName(unknown,"Unknown function ID");integration=CalculusProblemName(variable,"Integration variable");
+    output=CalculusProblemName(CalculusOption(options,"outputvariable",:x),"Output variable");output!=integration ?_> .Error("Integral equation variables must be distinct");
+    CalculusIsExpression(kernel) && CalculusIsExpression(forcing) ?_> .Error("Integral kernel and forcing must be expression graphs");
+    a=lower ~!: :Rational;b=upper ~!: :Rational;scale=CalculusOption(options,"scale",1) ~!: :Rational;
+    CalculusProblemData([kernel,forcing,a,b,scale,options]);
+    .ImmutableValue({= schema="rix.calculus.equation-problem@1",kind=:fredholmSecondKind,unknown=name,kernel=kernel,forcing=forcing,
+      integrationVariable=integration,outputVariable=output,lower=a,upper=b,scale=scale,options=options,
+      convention=:uEqualsForcingPlusScaledIntegralKernelTimesU,execution=:inert,verification=:unverified,solver=:unavailable });
+};
+CalculusDerivativeDeclaration(functionId,derivativeId,domain,bounds,options ?= {= }) -> {;
+    original=CalculusProblemName(functionId,"Function ID");derivative=CalculusProblemName(derivativeId,"Derivative provider ID");
+    interval=CalculusProblemInterval(domain);range=CalculusProblemInterval(bounds);
+    order=CalculusOption(options,"order",1);(order ? :Integer) && order>=1 && order<=8 ?_> .Error("Declared derivative order must be 1..8");
+    CalculusProblemData([interval,range,options]);
+    .ImmutableValue({= schema="rix.calculus.derivative-declaration@1",functionId=original,derivativeId=derivative,order=order,
+       domain=interval,range=range,options=options,evidenceLevel=:declaredByCaller,certified=_,execution=:inert });
+};
+CalculusUseDeclaredDerivative(function,provider,declaration) -> {;
+    (function ? :MathematicalFunction) && (provider ? :MathematicalFunction) ?_> .Error("Declared derivatives require existing mathematical functions");
+    expected=CalculusDerivativeDeclaration(declaration[:functionId],declaration[:derivativeId],declaration[:domain],declaration[:range],declaration[:options]);
+    .ValidatedClaimEqual(declaration,expected) ?_> .Error("Altered derivative declaration");
+    declaration[:order]==1 ?_> .Error("Register higher derivatives as successive first-derivative declarations");
+    function.semanticId==declaration[:functionId] && provider.semanticId==declaration[:derivativeId] ?_> .Error("Derivative provider IDs do not match the declaration");
+    derivative=(application)->CalculusApply(provider,application[:arguments][1]);
+    obligations=(application)->[CalculusObligation(:domain,:inDeclaredInterval,application[:arguments][1],{= evidence={= kind=:declaredInterval,interval=declaration[:domain],declaration=declaration },reason=:declaredDerivativeDomain })];
+    CalculusRegister(function,{= derivative=derivative,derivativeObligations=obligations,derivativeEvidence=declaration });
+};
+
 calculusNamespace = {= };
 calculusNamespace._proto = {=
+    DifferentialProblem=(self,rhs,variable,unknowns,options ?= {= })->CalculusDifferentialProblem(rhs,variable,unknowns,options),
+    BoundaryProblem=(self,problem,conditions,options ?= {= })->CalculusBoundaryProblem(problem,conditions,options),
+    IntegralEquation=(self,unknown,kernel,variable,lower,upper,forcing,options ?= {= })->CalculusIntegralEquation(unknown,kernel,variable,lower,upper,forcing,options),
+    DerivativeDeclaration=(self,id,derivative,domain,bounds,options ?= {= })->CalculusDerivativeDeclaration(id,derivative,domain,bounds,options),
+    UseDeclaredDerivative=(self,function,provider,declaration)->CalculusUseDeclaredDerivative(function,provider,declaration),
     Function=(self, semanticId, options ?= {= })->CalculusBuildFunction(semanticId,options),
     Exp=(self, implementation ?= _)->CalculusExp(implementation),
     Log=(self, implementation ?= _)->CalculusLog(implementation),
@@ -4794,17 +4920,17 @@ calculusNamespace._proto = {=
 `, sourcePath: "bundled:calculus", kind: "rix" });
   catalog.addMetadata({ id: "canvas", description: "Serializable Canvas 2D drawing plans for Graphics and projected Scene3D snapshots.", kind: "host", mount: "canvas", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.canvas@1", "rix.renderer.canvas@2", "rix.viewport@1", "rix.selection@1"], schemas: ["rix.canvas-plan@1", "rix.canvas-accessibility@1", "rix.viewport@1", "rix.selection@1"], targets: ["canvas", "application/vnd.rix.canvas+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:canvas" }, { sourcePath: "bundled:canvas", kind: "host" });
   catalog.registerInstaller("canvas", install8);
-  catalog.addMetadata({ id: "cas", description: "Browser-safe course-level symbolic simplification, polynomial forms, and exact integration with checked replay.", kind: "rix", mount: "cas", exports: ["Simplify", "CheckSimplification", "NormalizePolynomial", "Expand", "Collect", "Factor", "Integrate", "CheckIntegral", "Capabilities"], groups: ["Algebra", "Calculus", "CAS", "Exact", "Symbolic"], permissions: [], requires: ["rix.calculus@1", "rix.polynomial@1", "rix.rational-function@1"], provides: ["rix.cas@1", "rix.cas.rewrite@1", "rix.cas.integral@1"], schemas: ["rix.cas.rewrite@1", "rix.cas.integral@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cas" }, { source: `/**
+  catalog.addMetadata({ id: "cas", description: "Browser-safe course-level symbolic simplification, polynomial forms, and exact integration with checked replay.", kind: "rix", mount: "cas", exports: ["Rewrite", "CheckRewrite", "AbsDomain", "CheckDomain", "Definite", "CheckDefinite", "Simplify", "CheckSimplification", "NormalizePolynomial", "Expand", "Collect", "Factor", "Integrate", "CheckIntegral", "Capabilities"], groups: ["Algebra", "Calculus", "CAS", "Exact", "Symbolic"], permissions: [], requires: ["rix.numerics@2", "rix.calculus@1", "rix.polynomial@1", "rix.rational-function@1"], provides: ["rix.cas@1", "rix.cas.rewrite@1", "rix.cas.integral@1"], schemas: ["rix.cas.rewrite@1", "rix.cas.integral@1", "rix.cas.definite@1", "rix.cas.course-rewrite@1", "rix.cas.domain-graph@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:cas" }, { source: `/**
 id: cas
 description: Browser-safe course-level symbolic simplification, polynomial forms, and exact integration with checked replay.
 kind: rix
 mount: cas
-exports: [Simplify, CheckSimplification, NormalizePolynomial, Expand, Collect, Factor, Integrate, CheckIntegral, Capabilities]
+exports: [Rewrite, CheckRewrite, AbsDomain, CheckDomain, Definite, CheckDefinite, Simplify, CheckSimplification, NormalizePolynomial, Expand, Collect, Factor, Integrate, CheckIntegral, Capabilities]
 groups: [Algebra, Calculus, CAS, Exact, Symbolic]
 permissions: []
-requires: [rix.calculus@1, rix.polynomial@1, rix.rational-function@1]
+requires: [rix.numerics@2, rix.calculus@1, rix.polynomial@1, rix.rational-function@1]
 provides: [rix.cas@1, rix.cas.rewrite@1, rix.cas.integral@1]
-schemas: [rix.cas.rewrite@1, rix.cas.integral@1]
+schemas: [rix.cas.rewrite@1, rix.cas.integral@1, rix.cas.definite@1, rix.cas.course-rewrite@1, rix.cas.domain-graph@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -4870,7 +4996,7 @@ CasCheckSimplification(candidate) -> {;
     valid = (candidate ? :Map) && candidate[:schema]=="rix.cas.rewrite@1" && candidate[:operation]==:simplify;
     valid ?_> .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasSimplification });
     recomputed = CasSimplify(candidate[:source]);
-    accepted = CasExpressionKey(recomputed[:expression])==CasExpressionKey(candidate[:expression]);
+    accepted = .ValidatedClaimEqual(recomputed,candidate);
     .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :simplificationClaimMismatch });
 };
 
@@ -5100,6 +5226,72 @@ CasIntegrateTrigProduct(left, right, variable) ?!- [
     }]);
 };
 
+### Mixed same-argument trig powers, total degree at most eight.
+CasBinomial(n,k) -> {;
+    value:=1;{@ j=1;j<=@k;{; @value~=@value*(@n-j+1)/j; };j+=1};value;
+};
+CasTrigFactor(expression) -> {;
+    direct=CasTrigKind(expression);
+    direct==_ ?_> {= kind=direct,degree=1,argument=expression[:arguments][1] };
+    (expression[:kind]==:operator && expression[:operation]==:power) ?_> _;
+    base=expression[:operands][1];kind=CasTrigKind(base);degree=CasConstantValue(expression[:operands][2]);
+    (kind!=_ && (degree ? :Integer) && degree>=0) ?_> _;
+    {= kind=kind,degree=degree,argument=base[:arguments][1] };
+};
+CasIntegrateMixedTrig(left,right,variable) -> {;
+    l=CasTrigFactor(left);r=CasTrigFactor(right);
+    (l!=_ && r!=_) ?_> CasUnsupported(:unsupportedProduct);
+    (l[:kind]!=r[:kind] && CasExpressionKey(l[:argument])==CasExpressionKey(r[:argument])) ?_> CasIntegrateTrigProduct(left,right,variable);
+    m=l[:kind]==:sin ?: l[:degree] ?_ r[:degree];n=l[:kind]==:cos ?: l[:degree] ?_ r[:degree];
+    m+n<=8 ?_> CasUnsupported(:mixedTrigonometricDegreeBudgetExceeded);
+    argument=l[:argument];affine=CasAffine(argument,variable);
+    (affine[:valid] && affine[:slope]!=0) ?_> CasUnsupported(:nonAffineTrigonometricArgument);
+    sine=.calculus.Sin()(argument);cosine=.calculus.Cos()(argument);primitive:=.calculus.Constant(0);
+    {? m%2==1 ? {;
+          p=(@m-1)//2;
+          {@ k=0;k<=@p;{; @primitive=@primitive-(-1)^k*CasBinomial(@p,k)*@cosine^(@n+2*k+1)/(@n+2*k+1); };k+=1};
+       };
+       n%2==1 ? {;
+          p=(@n-1)//2;
+          {@ k=0;k<=@p;{; @primitive=@primitive+(-1)^k*CasBinomial(@p,k)*@sine^(@m+2*k+1)/(@m+2*k+1); };k+=1};
+       };
+       {;
+          p=@m//2;q=@n//2;
+          {@ i=0;i<=@p;{;
+              {@ j=0;j<=@q;{;
+                  coefficient=(-1)^@i*CasBinomial(@p,@i)*CasBinomial(@q,j)/(2^(@p+@q));
+                  @primitive=@primitive+coefficient*CasTrigPowerPrimitive(:cos,2*@argument,@i+j)/2;
+              };j+=1};
+          };i+=1};
+       }
+    };
+    CasIntegrationState(:complete,primitive/affine[:slope],[],[{= rule=:mixedTrigonometricPowers,sineDegree=m,cosineDegree=n,argument=argument,slope=affine[:slope],maxTotalDegree=8 }]);
+};
+CasQuadraticCoefficients={>
+    (expression,variable) ?- [p=CasPolynomial(expression,variable),p.Degree()==2] -> p.Coefficients(:ascending),
+    (expression,variable) -> _
+};
+CasIntegrateRadical(argument,variable,reciprocal ?= _) -> {;
+    coefficients=CasQuadraticCoefficients(argument,variable);
+    coefficients!=_ ?_> CasUnsupported(:unsupportedRadicalForm);
+    c=coefficients[1];b=coefficients[2];a=coefficients[3];d=c/a-(b/(2*a))^2;
+    (a>0 || d<0) ?_> CasUnsupported(:noRealQuadraticRadicalInterior);
+    u=.calculus.Variable(variable)+b/(2*a);scale=.calculus.Sqrt()(.calculus.Constant(a.Abs()));
+    (a>0 && d==0)==_ ?_> {;
+        @reciprocal==_ ?_> CasUnsupported(:degenerateReciprocalRadical);
+        CasIntegrationState(:complete,@scale*@u*.calculus.Abs()(@u)/2,[],[{= rule=:absoluteAffineRadical,a=@a,b=@b,c=@c }]);
+    };
+    primitive=a<0 ?: {;
+        radius=.calculus.Sqrt()(.calculus.Constant(-@d));root=.calculus.Sqrt()(-@d-@u^2);angle=.calculus.Asin()(@u/radius);
+        @reciprocal ?: angle/@scale ?_ @scale*(@u*root-@d*angle)/2;
+    } ?_ {;
+        root=.calculus.Sqrt()(@u^2+@d);logarithm=CasLogAbs(@u+root);
+        @reciprocal ?: logarithm/@scale ?_ @scale*(@u*root+@d*logarithm)/2;
+    };
+    CasIntegrationState(:complete,primitive,[CasPositiveObligation(argument,:quadraticRadicalInterior)],
+      [{= rule=:quadraticRadicalSubstitution,a=a,b=b,c=c,completedSquare=d,reciprocal=reciprocal }]);
+};
+
 CasIntegrateProduct(left, right, variable) -> {;
     variableExpression = .calculus.Variable(variable);
     result := _;
@@ -5133,10 +5325,17 @@ CasIntegrateProduct(left, right, variable) -> {;
           @result ~= CasIntegrationState(:complete,CasIntegrateExpPower(@variableExpression,@rightDegree,@left,affine[:slope]),[],[{= rule=:integrationByPartsExpPower,degree=@rightDegree,slope=affine[:slope] }]);
       }
       ?_ _;
-    result==_ ?: CasIntegrateTrigProduct(left,right,variable) ?_ result;
+    result==_ ?: CasIntegrateMixedTrig(left,right,variable) ?_ result;
 };
 
-CasIntegrateQuotient(numerator, denominator, variable) ?!- [
+CasIntegrateQuotient(numerator,denominator,variable) -> {;
+    CasApplySemantic(denominator,"rix.function.sqrt.real-principal@1") ?_> CasIntegrateAffineQuotient(numerator,denominator,variable);
+    CasIndependent(numerator,variable) ?_> CasUnsupported(:unsupportedRadicalNumerator);
+    result=CasIntegrateRadical(denominator[:arguments][1],variable,1);
+    result[:status]==:complete ?_> result;
+    result.Set("expression",numerator*result[:expression]);
+};
+CasIntegrateAffineQuotient(numerator, denominator, variable) ?!- [
     CasIndependent(numerator,variable) ?_> CasUnsupported(:unsupportedQuotient),
     affine = CasAffine(denominator,variable),
     affine[:valid] && affine[:slope]!=0 ?_> CasUnsupported(:unsupportedQuotient)
@@ -5166,6 +5365,7 @@ CasIntegratePower(base, exponentExpression, variable) -> {;
 
 CasIntegrateApplication(expression, variable) -> {;
     argument = expression[:arguments][1];
+    CasApplySemantic(expression,"rix.function.sqrt.real-principal@1")==_ ?_> CasIntegrateRadical(argument,variable);
     affine = CasAffine(argument,variable);
     CasApplySemantic(expression,"rix.function.exp@1")
       ?: {;
@@ -5363,10 +5563,19 @@ CasIntegrate(value, variable ?= :x, options ?= {= }) -> {;
       ?: CasIntegratePolynomial(value)
       ?_ (value ? :RationalFunction)
       ?: CasIntegratePartialFractions(value)
-      ?_ CasIntegrateNode(CasExpression(value),name);
+      ?_ CasIntegrateNode(CasCourseGraph(value),name);
     CasIntegralResult(value,name,state);
 };
 
+CasEvidence(value) -> {;
+    (value ? :Polynomial)==_ ?_> {= kind=:polynomial,variable=value.Variable(),coefficients=value.AscendingCoefficients() };
+    (value ? :RationalFunction)==_ ?_> {= kind=:rationalFunction,variable=value.variable,numerator=CasEvidence(value.numerator),denominator=CasEvidence(value.denominator) };
+    CasIsExpression(value)==_ ?_> {= graph=CasExpressionKey(value) };
+    (value ? :Map)==_ ?_> .Keys(value).Reduce((output,key)->output.Set(key,CasEvidence(value[key])),{= });
+    (value ? :Array)==_ ?_> value.Map(item->CasEvidence(item));
+    value;
+};
+CasIntegralClaim(result) -> [result[:status],result[:variable],result[:reason],result[:exact],result[:verification],CasEvidence(result[:rules]),CasEvidence(result[:obligations])];
 CasCheckIntegral(candidate) -> {;
     valid = (candidate ? :Map) && candidate[:schema]=="rix.cas.integral@1";
     valid ?_> .ImmutableValue({= accepted=_,certified=_,reason=:malformedCasIntegral });
@@ -5375,19 +5584,204 @@ CasCheckIntegral(candidate) -> {;
     expressionMatches = recomputed[:status]==:complete
       ?: CasExpressionKey(recomputed[:antiderivative])==CasExpressionKey(candidate[:antiderivative])
       ?_ recomputed[:reason]==candidate[:reason];
-    accepted = statusMatches && expressionMatches;
+    accepted = statusMatches && expressionMatches && .ValidatedClaimEqual(CasIntegralClaim(candidate),CasIntegralClaim(recomputed));
     .ImmutableValue({= accepted=accepted,certified=accepted ?: 1 ?_ _,reason=accepted ?: _ ?_ :integralClaimMismatch,recomputed=recomputed });
 };
 
+### Bounded whole-domain definite integrals and transparent numerical fallback.
+CasCourseGraph(expression) -> {;
+    value=CasExpression(expression);state={= nodes=0 };state._mutable=1;
+    .ValidatedClaimEqual(value,value);
+    CasCourseVisit(value,state,0);value;
+};
+CasCourseVisit(expression,state,depth) -> {;
+    state[:nodes]+=1;
+    (depth<=64 && state[:nodes]<=4096) ?_> .Error("Course graph exceeds depth 64 or 4096 nodes");
+    kind=expression[:kind];
+    children=kind==:operator ?: expression[:operands] ?_ kind==:apply ?: expression[:arguments] ?_ [];
+    _ := children.Map(child->CasCourseVisit(child,state,depth+1));1;
+};
+CasReplace(expression,variable,replacement) -> {;
+    kind=expression[:kind];
+    kind==:variable ?_> {? kind==:operator ? {= valueKind=:calculusExpression,schema="rix.calculus.expression@1",kind=:operator,operation=expression[:operation],operands=expression[:operands].Map(child->CasReplace(child,variable,replacement)) };
+                          kind==:apply ? {= valueKind=:calculusExpression,schema="rix.calculus.expression@1",kind=:apply,semanticId=expression[:semanticId],name=expression[:name],arguments=expression[:arguments].Map(child->CasReplace(child,variable,replacement)) };
+                          expression };
+    .ExpressionVariableMatches(expression,variable) ?: replacement ?_ expression;
+};
+CasParityOperator(expression,variable) -> {;
+    operands=expression[:operands];op=expression[:operation];p=CasParity(operands[1],variable);
+    op!=:negate ?_> p;
+    q=CasParity(operands[2],variable);
+    (op!=:add && op!=:subtract) ?_> (p==q ?: q ?_ :unknown);
+    (op!=:multiply && op!=:divide) ?_> ((p==:unknown || q==:unknown) ?: :unknown ?_ p==q ?: :even ?_ :odd);
+    op==:power ?_> :unknown;
+    exponent=CasConstantValue(operands[2]);(exponent ? :Integer) ?_> :unknown;
+    p==:unknown ?: :unknown ?_ exponent%2==0 ?: :even ?_ p;
+};
+CasParity(expression,variable) -> {;
+    kind=expression[:kind];
+    kind!=:constant ?_> :even;
+    kind!=:variable ?_> (.ExpressionVariableMatches(expression,variable) ?: :odd ?_ :even);
+    affine=CasAffine(expression,variable);
+    affine[:valid]==_ ?_> (affine[:slope]==0 ?: :even ?_ affine[:intercept]==0 ?: :odd ?_ :unknown);
+    kind!=:operator ?_> CasParityOperator(expression,variable);
+    kind==:apply ?_> :unknown;
+    p=CasParity(expression[:arguments][1],variable);id=expression[:semanticId];
+    p!=:even ?_> :even;
+    p==:odd ?_> :unknown;
+    ["rix.function.cos@1","rix.function.abs.real@1"].Includes(id) ?: :even
+      ?_ ["rix.function.sin@1","rix.function.atan.real-principal@1","rix.function.asin.real-principal@1"].Includes(id) ?: :odd ?_ :unknown;
+};
+CasRangeDefined(range) -> range[:certified]==1 && range[:domainstatus]==:allDefined && (range[:interval] ? :RationalInterval);
+CasConditionChecked(condition,bindings) -> {;
+    range=.numerics.GraphRange(condition[:expression],bindings,{= maxSubintervals=1 });
+    CasRangeDefined(range) ?_> _;
+    interval=range[:interval];relation=condition[:relation];
+    {? relation==:positive ? interval.Low()>0;
+       relation==:nonnegative ? interval.Low()>=0;
+       relation==:nonpositive ? interval.High()<=0;
+       relation==:nonzero ? (interval.Low()>0 || interval.High()<0);
+       (relation==:defined || relation==:real) ? 1;
+       _ };
+};
+CasFitsEvidence={>
+    (value) ?- [checked=.ValidatedClaimEqual(value,value)] -> 1,
+    (value) -> _
+};
+CasDefiniteNumerical(expression,variable,lower,upper,options,domain,parity,primitive) -> {;
+    count=CasOption(options,"panels",16);(count ? :Integer) && count>=1 && count<=256 ?_> .Error("Definite panels must be 1..256");
+    tolerance=CasOption(options,"tolerance",1/1000) ~!: :Rational;tolerance>=0 ?_> .Error("Definite tolerance must be nonnegative");
+    approximate=CasOption(options,"fallback",:certified)==:approximate;
+    lo=parity==:even ?: (lower+upper)/2 ?_ .Min(lower,upper);hi=.Max(lower,upper);width=(hi-lo)/count;orientation=upper>=lower ?: 1 ?_ -1;
+    symmetryFactor=parity==:even ?: 2 ?_ 1;
+    total:=0:0;samples:=[];unresolved:=[];exhausted:=_;evaluated:=0;
+    CasFitsEvidence([expression,domain,domain,primitive,primitive,options]) ?_> .Error("Definite source evidence exceeds bounded retention");
+    {@ i=0;i<@count && @exhausted==_;{;
+        left=@lo+i*@width;right=left+@width;binding=@approximate ?: (left+right)/2 ?_ left:right;
+        range=.numerics.GraphRange(@expression,{= }.Set(@variable,binding),{= maxSubintervals=1 });
+        CasRangeDefined(range) ?: {;
+            nextTotal=@total+@width*@range[:interval];nextSamples=@samples.Push({= interval=@left:@right,range=@range[:interval] });
+            retained=[@expression,@domain,@primitive,@options,nextTotal,nextSamples];
+            CasFitsEvidence([retained,retained]) ?: {; @total~=@nextTotal;@samples~=@nextSamples;@evaluated+=1; }
+              ?_ {; @unresolved~=@unresolved.Push(@left:@hi);@exhausted~=1; };
+        } ?_ {; @unresolved~=@unresolved.Push(@left:@right); };
+    };i+=1};
+    interval=symmetryFactor*(orientation>0 ?: total ?_ 0-total);complete=unresolved.Len()==0;
+    status=complete==_ ?: :unresolved ?_ approximate ?: :approximate ?_ :certified;
+    .ImmutableValue({= schema="rix.cas.definite@1",source=expression,variable=variable,lower=lower,upper=upper,options=options,
+        status=status,exact=_,certified=complete && approximate==_,domain=domain,parity=parity,primitive=primitive,
+        interval=(complete && approximate==_) ?: interval ?_ _,candidate=complete ?: interval.Midpoint() ?_ _,
+        goalMet=(complete && approximate==_) && interval.Width()<=tolerance,
+        method=approximate ?: :midpointApproximation ?_ :intervalRiemannQuadrature,
+        samples=samples,unresolved=unresolved,symmetryFactor=symmetryFactor,work={= panels=evaluated,maxPanels=count,evidenceExhausted=exhausted,exhausted=exhausted || (approximate==_ && interval.Width()>tolerance) },derivativeAssumptions=[] });
+};
+CasDefinite(value,variable,lower,upper,options ?= {= }) -> {;
+    expression=CasCourseGraph(value);name=CasVariableName(variable);
+    a=lower ~!: :Rational;b=upper ~!: :Rational;
+    .ValidatedClaimEqual([expression,options,a,b],[expression,options,a,b]);
+    [:certified,:approximate].Includes(CasOption(options,"fallback",:certified)) ?_> .Error("Definite fallback must be :certified or :approximate");
+    bindings={= }.Set(name,.Min(a,b):.Max(a,b));domain=.numerics.GraphRange(expression,bindings,{= maxSubintervals=1 });
+    CasRangeDefined(domain) ?_> .ImmutableValue({= schema="rix.cas.definite@1",source=expression,variable=name,lower=a,upper=b,options=options,
+       status=:unresolved,exact=_,certified=_,reason=:sourceDomainNotCertified,domain=domain,unresolved=[.Min(a,b):.Max(a,b)] });
+    center=(a+b)/2;shifted=CasReplace(expression,name,.calculus.Variable(name)+center);parity=CasParity(.calculus.SimplifyResult(shifted)[:expression],name);
+    (a!=b && parity!=:odd) ?_> .ImmutableValue({= schema="rix.cas.definite@1",source=expression,variable=name,lower=a,upper=b,options=options,
+        status=:exact,exact=1,certified=1,value=0,domain=domain,parity=parity,method=:intervalSymmetry,unresolved=[],derivativeAssumptions=[] });
+    primitive=CasIntegrate(expression,name);
+    (primitive[:status]==:complete && primitive[:obligations].All(condition->CasConditionChecked(condition,bindings))) ?_> CasDefiniteNumerical(expression,name,a,b,options,domain,parity,primitive);
+    valueExpression={= valueKind=:calculusExpression,schema="rix.calculus.expression@1",kind=:operator,operation=:subtract,operands=[CasReplace(primitive[:antiderivative],name,.calculus.Constant(b)),CasReplace(primitive[:antiderivative],name,.calculus.Constant(a))] };
+    endpoints=.numerics.GraphRange(valueExpression,{= },{= maxSubintervals=1 });
+    CasRangeDefined(endpoints) ?_> CasDefiniteNumerical(expression,name,a,b,options,domain,parity,primitive);
+    scalar=endpoints[:interval].Width()==0 ?: endpoints[:interval].Low() ?_ _;
+    .ImmutableValue({= schema="rix.cas.definite@1",source=expression,variable=name,lower=a,upper=b,options=options,
+        status=:exact,exact=1,certified=1,value=scalar,valueExpression=valueExpression,interval=endpoints[:interval],
+        primitive=primitive,domain=domain,endpoints=endpoints,parity=parity,method=:fundamentalTheorem,unresolved=[],derivativeAssumptions=[] });
+};
+CasCheckDefinite(result) -> .ValidatedClaimEqual(result,CasDefinite(result[:source],result[:variable],result[:lower],result[:upper],result[:options]));
+
+### Explicit course identities: local premises never become global assumptions.
+CasCourseCondition(expression,relation) -> .calculus.Obligation(:domain,relation,expression,{= reason=:courseRewriteDomain });
+CasRequireOperator(expression,operation,count) -> {;
+    (expression[:kind]==:operator && expression[:operation]==operation && expression[:operands].Len()==count) ?_> .Error("Rewrite source does not match the named rule");
+    expression[:operands];
+};
+CasRequireApplication(expression,id) -> {;
+    CasApplySemantic(expression,id) ?_> .Error("Rewrite source does not match the named semantic function");expression[:arguments][1];
+};
+CasCourseRewrite(value,rule,premises ?= []) -> {;
+    source=CasCourseGraph(value);
+    (premises ? :Array) && premises.Len()<=32 ?_> .Error("Rewrite premises must be an Array with at most 32 conditions");
+    _ := premises.Map(condition->{;
+        (condition ? :Map) && condition[:schema]=="rix.calculus.obligation@1" && condition[:kind]==:domain
+          && [:defined,:real,:positive,:nonnegative,:nonpositive,:nonzero].Includes(condition[:relation]) ?_> .Error("Expected existing local Calculus domain obligations");
+        CasCourseGraph(condition[:expression]);
+    });
+    .ValidatedClaimEqual(premises,premises);
+    result={?
+      [:absNonnegative,:absNonpositive].Includes(rule) ? {;
+        argument=CasRequireApplication(@source,"rix.function.abs.real@1");
+        {= expression=@rule==:absNonnegative ?: argument ?_ -argument,
+           obligations=[CasCourseCondition(argument,@rule==:absNonnegative ?: :nonnegative ?_ :nonpositive)] };
+      };
+      rule==:sqrtSquare ? {;
+        square=CasRequireApplication(@source,"rix.function.sqrt.real-principal@1");parts=CasRequireOperator(square,:power,2);
+        CasConstantValue(parts[2])==2 ?_> .Error("sqrtSquare requires a square");
+        {= expression=.calculus.Abs()(parts[1]),obligations=[CasCourseCondition(parts[1],:real)] };
+      };
+      rule==:nestedIntegerPower ? {;
+        outer=CasRequireOperator(@source,:power,2);inner=CasRequireOperator(outer[1],:power,2);
+        m=CasConstantValue(inner[2]);n=CasConstantValue(outer[2]);
+        (m ? :Integer) && (n ? :Integer) && m.Abs()<=8 && n.Abs()<=8 ?_> .Error("Nested powers require Integer exponents between -8 and 8");
+        {= expression=inner[1]^(m*n),obligations=[CasCourseCondition(inner[1],(m<=0 || n<=0) ?: :nonzero ?_ :defined)] };
+      };
+      rule==:trigPythagorean ? {;
+        terms=CasRequireOperator(@source,:add,2);l=CasTrigFactor(terms[1]);r=CasTrigFactor(terms[2]);
+        (l!=_ && r!=_ && l[:kind]!=r[:kind] && l[:degree]==2 && r[:degree]==2 && CasExpressionKey(l[:argument])==CasExpressionKey(r[:argument]))
+          ?_> .Error("trigPythagorean requires matching sine/cosine squares");
+        {= expression=.calculus.Constant(1),obligations=[CasCourseCondition(l[:argument],:real)] };
+      };
+      [:cancelSelf,:cancelFactor].Includes(rule) ? {;
+        parts=CasRequireOperator(@source,:divide,2);denominator=parts[2];
+        target=@rule==:cancelSelf ?: {;
+            CasExpressionKey(@parts[1])==CasExpressionKey(@denominator) ?_> .Error("cancelSelf requires identical factors");.calculus.Constant(1);
+        } ?_ {;
+            product=CasRequireOperator(@parts[1],:multiply,2);key=CasExpressionKey(@denominator);
+            CasExpressionKey(product[1])==key ?: product[2] ?_ CasExpressionKey(product[2])==key ?: product[1] ?_ .Error("cancelFactor requires a matching denominator factor");
+        };
+        {= expression=target,obligations=[CasCourseCondition(denominator,:nonzero),CasCourseCondition(target,:defined)],excludedZeros=[denominator] };
+      };
+      .Error("Unsupported bounded course rewrite rule")
+    };
+    obligations=result[:obligations];
+    matched=obligations.Map(condition->premises.Any(premise->premise[:relation]==condition[:relation] && CasExpressionKey(premise[:expression])==CasExpressionKey(condition[:expression])));
+    .ImmutableValue({= schema="rix.cas.course-rewrite@1",source=source,rule=rule,premises=premises,expression=result[:expression],
+       obligations=obligations,matchedPremises=matched,excludedZeros=result[:excludedZeros]==_ ?: [] ?_ result[:excludedZeros],
+       status=matched.All(value->value==1) ?: :assumed ?_ :conditional,certified=_,
+       evidenceLevel=:checkedConditionalIdentity,globalAssumptionsChanged=_ });
+};
+CasCheckCourseRewrite(result) -> .ValidatedClaimEqual(result,CasCourseRewrite(result[:source],result[:rule],result[:premises]));
+CasAbsDomain(expression) -> {;
+    source=CasCourseGraph(expression);
+    .ImmutableValue({= schema="rix.cas.domain-graph@1",kind=:absoluteValue,source=source,domain=[CasCourseCondition(source,:real)],
+      branches=[{= relation=:ge,bound=0,expression=source },{= relation=:lt,bound=0,expression=-source }],
+      boundary=0,continuous=1,derivativeAtBoundary=:notGenerallyDefined,verification=:checkedPiecewiseDefinition });
+};
+CasCheckDomain(result) -> .ValidatedClaimEqual(result,CasAbsDomain(result[:source]));
+
 casCapabilities = .ImmutableValue({=
-    simplification=[:checkedGraphIdentities,:canonicalPolynomialNormalization,:expand,:collect,:factor],
-    integration=[:polynomials,:affinePowers,:affineReciprocals,:affineExponentials,:affineSine,:affineCosine,:trigonometricPowerReduction,:trigonometricProductToSum,:logByParts,:polynomialTimesExponentialByParts,:linearPartialFractions,:irreducibleQuadraticPartialFractions],
-    limits={= maxTrigonometricDegree=8 },
-    unsupported=[:generalRischIntegration,:mixedTrigonometricPowers,:radicalSubstitution,:higherDegreePartialFractionResiduals,:unrestrictedIdentitySearch]
+    simplification=[:localPremiseCourseRules,:holePreservingCancellation,:absoluteValueDomainGraph,:checkedGraphIdentities,:canonicalPolynomialNormalization,:expand,:collect,:factor],
+    integration=[:mixedTrigonometricPowers,:quadraticRadicalSubstitution,:definiteIntegralSymmetry,:certifiedRangeQuadrature,:explicitApproximateFallback,:polynomials,:affinePowers,:affineReciprocals,:affineExponentials,:affineSine,:affineCosine,:trigonometricPowerReduction,:trigonometricProductToSum,:logByParts,:polynomialTimesExponentialByParts,:linearPartialFractions,:irreducibleQuadraticPartialFractions],
+    limits={= maxTrigonometricDegree=8,maxMixedTotalDegree=8,maxGraphNodes=4096,maxGraphDepth=64,maxQuadraturePanels=256 },
+    unsupported=[:generalRischIntegration,:higherDegreeRadicalSubstitution,:higherDegreePartialFractionResiduals,:unrestrictedIdentitySearch]
 });
 
 casNamespace = {= };
 casNamespace._proto = {=
+    Rewrite=(self,value,rule,premises ?= [])->CasCourseRewrite(value,rule,premises),
+    CheckRewrite=(self,result)->CasCheckCourseRewrite(result),
+    AbsDomain=(self,value)->CasAbsDomain(value),
+    CheckDomain=(self,result)->CasCheckDomain(result),
+    Definite=(self,value,variable,lower,upper,options ?= {= })->CasDefinite(value,variable,lower,upper,options),
+    CheckDefinite=(self,result)->CasCheckDefinite(result),
     Simplify=(self,value)->CasSimplify(value),
     CheckSimplification=(self,value)->CasCheckSimplification(value),
     NormalizePolynomial=(self,value,variable ?= :x)->CasNormalizePolynomial(value,variable),
@@ -7195,18 +7589,18 @@ complexNamespace._proto={=
     ["Numerics","Exact"]
 );
 `, sourcePath: "bundled:complex", kind: "rix" });
-  catalog.addMetadata({ id: "complex-viz", description: "Certified complex coloring, enclosure-aware surfaces, and Riemann-sphere scenes.", kind: "rix", mount: "complexViz", aliases: ["domainColoring"], exports: ["DomainColoring", "RationalFunction", "Sample", "Pole", "Unresolved", "PhaseSector", "MagnitudeBand", "Color", "CayleyColor", "Surface", "RiemannSphere"], groups: ["Graphics", "Exact", "Algebra"], permissions: [], requires: ["rix.complex@2", "rix.scene3d@1"], provides: ["rix.complex-visualization@1", "rix.complex-visualization@2"], schemas: ["rix.complex-viz.sample@1", "rix.complex-viz.domain-coloring@1", "rix.complex-viz.cayley-color@1", "rix.complex-viz.surface@1", "rix.complex-viz.riemann-sphere@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:complex-viz" }, { source: `/**
+  catalog.addMetadata({ id: "complex-viz", description: "Certified complex coloring, enclosure-aware surfaces, and Riemann-sphere scenes.", kind: "rix", mount: "complexViz", aliases: ["domainColoring"], exports: ["Graph4D", "Slice4D", "Project4D", "Linked4D", "DomainColoring", "RationalFunction", "Sample", "Pole", "Unresolved", "PhaseSector", "MagnitudeBand", "Color", "CayleyColor", "Surface", "RiemannSphere"], groups: ["Graphics", "Exact", "Algebra"], permissions: [], requires: ["rix.complex@2", "rix.scene3d@1", "rix.nd@2"], provides: ["rix.complex-viz.graph4d@1", "rix.complex-viz.projected4d@1", "rix.complex-visualization@1", "rix.complex-visualization@2"], schemas: ["rix.complex-viz.graph4d@1", "rix.complex-viz.projected4d@1", "rix.complex-viz.sample@1", "rix.complex-viz.domain-coloring@1", "rix.complex-viz.cayley-color@1", "rix.complex-viz.surface@1", "rix.complex-viz.riemann-sphere@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:complex-viz" }, { source: `/**
 id: complex-viz
 description: Certified complex coloring, enclosure-aware surfaces, and Riemann-sphere scenes.
 kind: rix
 mount: complexViz
 aliases: [domainColoring]
-exports: [DomainColoring, RationalFunction, Sample, Pole, Unresolved, PhaseSector, MagnitudeBand, Color, CayleyColor, Surface, RiemannSphere]
+exports: [Graph4D, Slice4D, Project4D, Linked4D, DomainColoring, RationalFunction, Sample, Pole, Unresolved, PhaseSector, MagnitudeBand, Color, CayleyColor, Surface, RiemannSphere]
 groups: [Graphics, Exact, Algebra]
 permissions: []
-requires: [rix.complex@2, rix.scene3d@1]
-provides: [rix.complex-visualization@1, rix.complex-visualization@2]
-schemas: [rix.complex-viz.sample@1, rix.complex-viz.domain-coloring@1, rix.complex-viz.cayley-color@1, rix.complex-viz.surface@1, rix.complex-viz.riemann-sphere@1]
+requires: [rix.complex@2, rix.scene3d@1, rix.nd@2]
+provides: [rix.complex-viz.graph4d@1, rix.complex-viz.projected4d@1, rix.complex-visualization@1, rix.complex-visualization@2]
+schemas: [rix.complex-viz.graph4d@1, rix.complex-viz.projected4d@1, rix.complex-viz.sample@1, rix.complex-viz.domain-coloring@1, rix.complex-viz.cayley-color@1, rix.complex-viz.surface@1, rix.complex-viz.riemann-sphere@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -7354,6 +7748,8 @@ CVDomainColoring(spec) -> {;
     resolution = CVOption(spec, "resolution", [32, 32]);
     columns = CVPositiveInteger(resolution[1], "DomainColoring columns");
     rows = CVPositiveInteger(resolution[2], "DomainColoring rows");
+    budget=CVPositiveInteger(CVOption(spec,"maxsamples",4096),"DomainColoring maxSamples");
+    budget<=16384&&rows*columns<=budget ?_> .Error("DomainColoring sample budget exceeded");
     size = CVOption(spec, "size", [360, 360]);
     paletteSpec = CVOption(spec, "colorscale", _);
     cellWidth = size[1] / columns;
@@ -7411,6 +7807,8 @@ CVSurface(spec) -> {;
     fn=spec[:fn]; fn==_ ?: .Error("Surface requires fn") ?_ _;
     domain=CVOption(spec,"domain",{= re=[-2,2],im=[-2,2] }); resolution=CVOption(spec,"resolution",[24,24]);
     columns=CVPositiveInteger(resolution[1],"Surface columns"); rows=CVPositiveInteger(resolution[2],"Surface rows");
+    budget=CVPositiveInteger(CVOption(spec,"maxsamples",4096),"Surface maxSamples");
+    columns>=2&&rows>=2&&budget<=16384&&rows*columns<=budget ?_> .Error("Surface requires two rows/columns within the sample budget");
     kind=CVOption(spec,"height",:magnitudeSquared); re=domain[:re]; im=domain[:im]; reStep=(re[2]-re[1])/(columns-1); imStep=(im[2]-im[1])/(rows-1);
     vertices:=[]; colors:=[]; branchCuts:=[]; unresolved:=0;
     {@ row=1;row<=@rows;{;
@@ -7454,8 +7852,95 @@ CVRiemannSphere(values,options ?= {= }) -> {;
     });
 };
 
+## A bounded graph sample in (Re z, Im z, Re f, Im f); sampling never proves unsampled behavior.
+CVGraph4D(spec)->{;
+    fn=spec[:fn];fn!=_ ?_> .Error("complexViz.Graph4D requires fn");
+    maximum=CVPositiveInteger(CVOption(spec,"maxsamples",1024),"Graph4D maxSamples");maximum<=4096 ?_> .Error("Graph4D maxSamples exceeds 4096");
+    points:=CVOption(spec,"points",_);domain=CVOption(spec,"domain",{= re=[-1,1],im=[-1,1] });resolution=CVOption(spec,"resolution",[5,5]);
+    points==_ ?: {;
+        columns=CVPositiveInteger(@resolution[1],"Graph4D columns");rows=CVPositiveInteger(@resolution[2],"Graph4D rows");
+        columns>=2&&rows>=2&&columns*rows<=@maximum ?_> .Error("Graph4D grid requires at least two rows/columns within maxSamples");
+        @points~=[];
+        {@ row=1;row<=@rows;{; {@ column=1;column<=@columns;{;
+            @points~=@points.Push([@domain[:re][1]+(column-1)*(@domain[:re][2]-@domain[:re][1])/(@columns-1),@domain[:im][1]+(@row-1)*(@domain[:im][2]-@domain[:im][1])/(@rows-1)]);
+        };column+=1};};row+=1};
+    } ?_ _;
+    points.Len()>=1&&points.Len()<=maximum ?_> .Error("Graph4D sample budget exceeded");
+    inputs=points.Map((point)->{; point.Len()==2 ?_> .Error("Graph4D inputs require two coordinates");point.Map((value)->value ~!: :Rational);});
+    .ValidatedClaimEqual(inputs,inputs);
+    records=inputs.Map((point,index)->{;
+        sample=CVNormalizeSample(.Complex.FromParts(point[1],point[2])|>@fn);status=sample[:status];
+        [:value,:enclosure,:pole,:unresolved].Includes(status) ?_> .Error("Graph4D sample has an unsupported status");
+        output=status==:value ?: [.Complex.Re(sample[:value]) ~!: :Rational,.Complex.Im(sample[:value]) ~!: :Rational]
+          ?_ (status==:enclosure ?: [sample[:enclosure][:realInterval],sample[:enclosure][:imaginaryInterval]] ?_ [_,_]);
+        bounds=point.Map((value)->value:value).Concat(output.Map((value)->value==_ ?: _ ?_ (value ? :RationalInterval ?: value ?_ (value:value))));
+        {= id=@"complex.sample.@{index}",index=index,input=point,output=output,bounds=bounds,status=status,
+            exactSample=status==:value,sourceEnclosure=status==:enclosure ?: sample[:enclosure] ?_ _,
+            branchStatus=CVOption(sample,"branchstatus",_),reason=CVOption(sample,"reason",_),unsampledCertified=_,topology=:unproved };
+    });
+    result=.ImmutableValue({= schema="rix.complex-viz.graph4d@1",coordinates=[:reZ,:imZ,:reF,:imF],samples=records,
+        source={= domain=domain,resolution=resolution,inputSlice=CVOption(spec,"inputslice",_) },
+        work={= evaluations=records.Len(),maxSamples=maximum },coverage=:sampledInputsOnly,unsampledCertified=_,topology=:unproved });
+    .ValidatedClaimEqual(result,result);result;
+};
+CVSlice4D(spec,slice,parameters)->{;
+    slice[:schema]=="rix.nd.slice@1"&&slice[:sourceDimension]==2 ?_> .Error("complexViz.Slice4D requires a two-dimensional input affine slice");
+    parameters.Len()<=CVOption(spec,"maxsamples",1024)&&parameters.Len()<=4096 ?_> .Error("complexViz.Slice4D sample budget exceeded");
+    inputs=parameters.Map((parameter)->.nd.Parameterize(@slice,parameter));
+    CVGraph4D(spec.Merge({= points=inputs,inputSlice={= slice=slice,parameters=parameters,meaning=:sampledInputSection } }));
+};
+CVProjectedBounds(bounds,projection)->{;
+    projection[:matrix].Map((row,index)->{;
+        value:=projection[:offset][index]:projection[:offset][index];known:=1;
+        {@ axis=1;axis<=4;{;
+            @row[axis]!=0 ?: {;
+                @bounds[@axis]==_ ?: {; @known=_; } ?_ {; @value+=@row[@axis]*@bounds[@axis]; };
+            } ?_ _;
+        };axis+=1};known ?: value ?_ _;
+    });
+};
+CVProject4D(graph,projection,options ?= {= })->{;
+    graph[:schema]=="rix.complex-viz.graph4d@1" ?_> .Error("complexViz.Project4D requires Graph4D samples");
+    projection[:schema]=="rix.nd.projection@1"&&projection[:sourceDimension]==4&&(projection[:targetDimension]==2||projection[:targetDimension]==3) ?_> .Error("complexViz.Project4D requires a four-to-two or four-to-three affine projection");
+    .ValidatedClaimEqual(graph,graph);.ValidatedClaimEqual(projection,projection);
+    maximum=CVPositiveInteger(CVOption(options,"maxvisiblesamples",256),"Project4D maxVisibleSamples");maximum<=1024 ?_> .Error("Project4D display budget exceeds 1024");
+    graph[:samples].Len()<=4096 ?_> .Error("Project4D source sample budget exceeded");
+    children:=[];records:=[];uncertainty:=[];omitted:=[];
+    {@ index=1;index<=@graph[:samples].Len();{;
+        sample=@graph[:samples][index];bounds=CVProjectedBounds(sample[:bounds],@projection);
+        known=bounds.All((value)->value!=_);displayBounds=bounds.Len()==2 ?: bounds.Push(0:0) ?_ bounds;
+        record={= id=sample[:id],source=sample,projectedBounds=bounds,known=known,projectionAddsCertification=_ };
+        @records~=@records.Push(record);
+        (sample[:status]!=:value||!known) ?: {; @uncertainty~=@uncertainty.Push(@record); } ?_ _;
+        index<=@maximum ?: {;
+            @known ?: {;
+                point=@displayBounds.All((range)->range.Low()==range.High());
+                color=@sample[:status]==:value ?: "#2563eb" ?_ "#d97706";
+                point ?: {; @children~=@children.Push(.scene3d.PointCloud([@displayBounds.Map((range)->range.Low())],{= id=@sample[:id],radius=CVOption(@options,"radius",1/30),color=@color,metadata=@record,label=@"@{@sample[:status]} source sample" })); }
+                  ?_ {; @children~=@children.Push(.scene3d.CellBox(@displayBounds,{= id=@sample[:id],color=@color,opacity=1/3,metadata=@record,label="Source enclosure at sampled input" })); };
+            } ?_ _;
+        } ?_ {; @omitted~=@omitted.Push(@record); };
+    };index+=1};
+    children~=children.Push(.scene3d.Annotation([0,0,0],@"Finite samples only; @{uncertainty.Len()} uncertain/pole samples, @{omitted.Len()} omitted",{= id="complex.legend",size=11,policy=.scene3d.AnnotationPolicy({= offset=CVOption(options,"legendoffset",[0,0]) }) }));
+    .scene3d.Scene(children,options.Merge({= metadata={= schema="rix.complex-viz.projected4d@1",source=graph,projection=projection,records=records,uncertainty=uncertainty,omitted=omitted,
+        unsampledCertified=_,topology=:unproved,work={= maxVisibleSamples=maximum,sourceSamples=graph[:samples].Len() } } }));
+};
+CVLinked4D(graph,options ?= {= })->{;
+    input=CVProject4D(graph,.nd.CoordinateProjection(4,[1,2]),options);output=CVProject4D(graph,.nd.CoordinateProjection(4,[3,4]),options);
+    maximum=CVOption(options,"maxvisiblesamples",256);groups:=[];
+    {@ index=1;index<=.Min(@maximum,@graph[:samples].Len());{;
+        sample=@graph[:samples][index];
+        (sample[:status]==:value||sample[:status]==:enclosure) ?: {; @groups~=@groups.Push([{= panel=1,id=@sample[:id] },{= panel=2,id=@sample[:id] }]); } ?_ _;
+    };index+=1};
+    .scene3d.LinkedViews([input,output],groups,options);
+};
+
 complexVizNamespace = {= };
 complexVizNamespace._proto = {=
+    Graph4D=(self,spec)->CVGraph4D(spec),
+    Slice4D=(self,spec,slice,parameters)->CVSlice4D(spec,slice,parameters),
+    Project4D=(self,graph,projection,options ?= {= })->CVProject4D(graph,projection,options),
+    Linked4D=(self,graph,options ?= {= })->CVLinked4D(graph,options),
     DomainColoring=(self, spec)->CVDomainColoring(spec),
     RationalFunction=(self, numerator, denominator)->CVRationalFunction(numerator, denominator),
     Sample=(self, value)->CVSample(value),
@@ -7470,18 +7955,18 @@ complexVizNamespace._proto = {=
 };
 .Host.RegisterValue("complexViz", complexVizNamespace, "Certified complex coloring, surfaces, and Riemann-sphere scenes", ["Graphics", "Exact", "Algebra"]);
 `, sourcePath: "bundled:complex-viz", kind: "rix" });
-  catalog.addMetadata({ id: "continued-fraction", description: "Finite, lazy, transduced, and certified-extracted simple continued fractions.", kind: "rix", mount: "continuedFraction", aliases: ["cf"], exports: ["Finite", "Lazy", "Periodic", "GeneralizedFinite", "Sqrt2", "Sqrt", "NthRoot", "FromRational", "FromRefinable", "Coefficient", "CoefficientResult", "Coefficients", "Convergent", "Convergents", "Enclosure", "ErrorInterval", "QuadraticForm", "BestApproximation", "Translate", "Reciprocal", "ZeroStatus", "Record"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.continued-fraction@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.continued-fraction.finite@1", "rix.continued-fraction.lazy@1", "rix.continued-fraction.generalized-finite@1", "rix.continued-fraction.generalized-result@1", "rix.continued-fraction.generalized-normalization@1", "rix.continued-fraction.gosper@1", "rix.continued-fraction.extractor@1", "rix.continued-fraction.coefficient-result@1", "rix.continued-fraction.arithmetic-real@1", "rix.continued-fraction.quadratic-form@1", "rix.continued-fraction.best-approximation@1", "rix.continued-fraction.zero-status@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:continued-fraction" }, { source: `/**
+  catalog.addMetadata({ id: "continued-fraction", description: "Finite, lazy, transduced, and certified-extracted simple continued fractions.", kind: "rix", mount: "continuedFraction", aliases: ["cf"], exports: ["Finite", "Lazy", "Periodic", "GeneralizedFinite", "Sqrt2", "Sqrt", "NthRoot", "FromRational", "FromRefinable", "Coefficient", "CoefficientResult", "Coefficients", "Convergent", "Convergents", "Enclosure", "ErrorInterval", "QuadraticForm", "BestApproximation", "Translate", "Reciprocal", "ZeroStatus", "Record", "Derivation", "CheckDerivation"], groups: ["Numerics", "Exact"], permissions: [], requires: ["rix.oracle@1", "rix.fraction@1"], provides: ["rix.continued-fraction@1", "rix.refinable@1", "rix.enclosable-real@1"], schemas: ["rix.continued-fraction.finite@1", "rix.continued-fraction.lazy@1", "rix.continued-fraction.generalized-finite@1", "rix.continued-fraction.generalized-result@1", "rix.continued-fraction.generalized-normalization@1", "rix.continued-fraction.gosper@1", "rix.continued-fraction.extractor@1", "rix.continued-fraction.coefficient-result@1", "rix.continued-fraction.arithmetic-real@1", "rix.continued-fraction.quadratic-form@1", "rix.continued-fraction.best-approximation@1", "rix.continued-fraction.zero-status@1", "rix.continued-fraction.derivation@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:continued-fraction" }, { source: `/**
 id: continued-fraction
 description: Finite, lazy, transduced, and certified-extracted simple continued fractions.
 kind: rix
 mount: continuedFraction
 aliases: [cf]
-exports: [Finite, Lazy, Periodic, GeneralizedFinite, Sqrt2, Sqrt, NthRoot, FromRational, FromRefinable, Coefficient, CoefficientResult, Coefficients, Convergent, Convergents, Enclosure, ErrorInterval, QuadraticForm, BestApproximation, Translate, Reciprocal, ZeroStatus, Record]
+exports: [Finite, Lazy, Periodic, GeneralizedFinite, Sqrt2, Sqrt, NthRoot, FromRational, FromRefinable, Coefficient, CoefficientResult, Coefficients, Convergent, Convergents, Enclosure, ErrorInterval, QuadraticForm, BestApproximation, Translate, Reciprocal, ZeroStatus, Record, Derivation, CheckDerivation]
 groups: [Numerics, Exact]
 permissions: []
-requires: [rix.oracle@1]
+requires: [rix.oracle@1, rix.fraction@1]
 provides: [rix.continued-fraction@1, rix.refinable@1, rix.enclosable-real@1]
-schemas: [rix.continued-fraction.finite@1, rix.continued-fraction.lazy@1, rix.continued-fraction.generalized-finite@1, rix.continued-fraction.generalized-result@1, rix.continued-fraction.generalized-normalization@1, rix.continued-fraction.gosper@1, rix.continued-fraction.extractor@1, rix.continued-fraction.coefficient-result@1, rix.continued-fraction.arithmetic-real@1, rix.continued-fraction.quadratic-form@1, rix.continued-fraction.best-approximation@1, rix.continued-fraction.zero-status@1]
+schemas: [rix.continued-fraction.finite@1, rix.continued-fraction.lazy@1, rix.continued-fraction.generalized-finite@1, rix.continued-fraction.generalized-result@1, rix.continued-fraction.generalized-normalization@1, rix.continued-fraction.gosper@1, rix.continued-fraction.extractor@1, rix.continued-fraction.coefficient-result@1, rix.continued-fraction.arithmetic-real@1, rix.continued-fraction.quadratic-form@1, rix.continued-fraction.best-approximation@1, rix.continued-fraction.zero-status@1, rix.continued-fraction.derivation@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -7655,6 +8140,15 @@ CFEnclosureAt(real, count ?= _) -> {;
            ?_ CFWitness(real, count == _ ?: 2 ?_ CFRequireCount(count, "Continued-fraction enclosure count"))[:interval]);
 };
 
+CFDerivation(real,count ?= _) -> {;
+    amount=count==_ ?: (real[:kind]==:finite ?: real[:length] ?_ .Error("Lazy derivations require an explicit coefficient count")) ?_ CFRequireCount(count,"Derivation count");
+    (amount>=1 && amount<=256 && (real[:kind]!=:finite || real[:length]<=256))
+      ?: _ ?_ .Error("Continued-fraction derivation supports at most 256 observed/finite coefficients");
+    coefficients=CFCoefficients(real,amount);
+    full=real[:kind]==:finite ?: CFCoefficients(real) ?_ _;
+    .fraction.CoefficientDerivation(coefficients,full);
+};
+
 CFErrorInterval(real, count) -> {;
     convergent = CFConvergent(real, count);
     enclosure = CFEnclosureAt(real, real[:kind] == :finite ?: _ ?_ count);
@@ -7724,6 +8218,7 @@ CFAttachProtocol(real) -> {;
         Translate = (self, offset, options ?= {= }) -> CFTranslate(self, offset, options),
         Reciprocal = (self, options ?= {= }) -> CFReciprocal(self, options),
         ZeroStatus = (self, options ?= {= }) -> CFZeroStatus(self, options),
+        Derivation = (self,count ?= _) -> CFDerivation(self,count),
         Record = (self) -> CFRecord(self),
         Enclose = (self, request ?= {= }) -> self[:kind] == :gosper
           ?: CFGosperProtocolEnclosure(self, request, :enclose)
@@ -9575,6 +10070,8 @@ continuedFractionNamespace._proto = {=
     Translate = (self, real, offset, options ?= {= }) -> CFTranslate(real, offset, options),
     Reciprocal = (self, real, options ?= {= }) -> CFReciprocal(real, options),
     ZeroStatus = (self, real, options ?= {= }) -> CFZeroStatus(real, options),
+    Derivation = (self,real,count ?= _) -> CFDerivation(real,count),
+    CheckDerivation = (self,evidence) -> .fraction.CheckDerivation(evidence),
     Record = (self, real) -> CFRecord(real)
 };
 
@@ -9587,9 +10084,9 @@ continuedFractionNamespace._proto = {=
 `, sourcePath: "bundled:continued-fraction", kind: "rix" });
   catalog.addMetadata({ id: "csv", description: "Schema-aware CSV/TSV import and export with exact numeric, sidecar, and streaming-row policies.", kind: "host", mount: "csv", exports: ["Render", "Parse", "ParseStream", "Collect", "Sidecar"], groups: ["Renderers", "Data"], permissions: [], provides: ["rix.renderer.csv@1", "rix.renderer.csv@2", "rix.csv.import@1", "rix.csv.sidecar@1"], schemas: ["rix.csv.import@1", "rix.csv.sidecar@1", "rix.data.relation@1", "rix.data.row-source@1"], targets: ["csv", "text/csv", "tsv", "text/tab-separated-values"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:csv" }, { sourcePath: "bundled:csv", kind: "host" });
   catalog.registerInstaller("csv", install18);
-  catalog.addMetadata({ id: "data", description: "Immutable typed relations with exact aggregation, bounded row sources, and deterministic tagged JSONL interchange.", kind: "host", mount: "data", exports: ["Relation", "Project", "Rename", "Distinct", "Filter", "Sort", "Join", "Group", "Aggregate", "Frequency", "Contingency", "Calculate", "Missing", "RowSource", "ParseJSONL", "RenderJSONL", "Collect", "TableView", "Schema", "Rows"], groups: ["Data"], permissions: [], provides: ["rix.data.relation@1", "rix.data.groups@1", "rix.data.contingency@1", "rix.data.row-source@1"], schemas: ["rix.data.relation@1", "rix.data.groups@1", "rix.data.contingency@1", "rix.data.row-source@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:data" }, { sourcePath: "bundled:data", kind: "host" });
+  catalog.addMetadata({ id: "data", description: "Immutable typed relations with exact aggregation, bounded row sources, and deterministic tagged JSONL interchange.", kind: "host", mount: "data", exports: ["Relation", "Project", "Rename", "Distinct", "Filter", "Sort", "Join", "Group", "Aggregate", "Frequency", "Contingency", "Calculate", "Missing", "RowSource", "ParseJSONL", "RenderJSONL", "Collect", "TableView", "Schema", "Rows", "EncodeJSON", "DecodeJSON", "RenderJSONLDocument", "ParseJSONLDocument", "RenderCSV", "ParseCSV"], groups: ["Data"], permissions: [], provides: ["rix.data.relation@1", "rix.data.groups@1", "rix.data.contingency@1", "rix.data.row-source@1", "rix.data.relation-document@1"], schemas: ["rix.data.relation@1", "rix.data.groups@1", "rix.data.contingency@1", "rix.data.row-source@1", "rix.data.relation-document@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:data" }, { sourcePath: "bundled:data", kind: "host" });
   catalog.registerInstaller("data", install4);
-  catalog.addMetadata({ id: "document", description: "Portable report templates with citations, assets, numbering policies, and safe target-specific nodes.", kind: "host", mount: "document", exports: ["Report", "Label", "Ref", "Theme", "References", "Bibliography", "Citation", "AssetManifest", "Asset", "Numbering", "Header", "Footer", "Template", "ApplyTemplate", "TargetMarkup"], groups: ["Documents"], permissions: [], provides: ["rix.document.report@1", "rix.document.report@2", "rix.document.template@1", "rix.document.assets@1"], schemas: ["rix.document.report@1", "rix.document.theme@1", "rix.document.bibliography@1", "rix.document.citation@1", "rix.document.assets@1", "rix.document.numbering@1", "rix.document.template@1", "rix.document.target-markup@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:document" }, { sourcePath: "bundled:document", kind: "host" });
+  catalog.addMetadata({ id: "document", description: "Portable report templates with citations, assets, numbering policies, and safe target-specific nodes.", kind: "host", mount: "document", exports: ["Report", "Label", "Ref", "Theme", "References", "Bibliography", "Citation", "AssetManifest", "Asset", "Numbering", "Header", "Footer", "Template", "ApplyTemplate", "TargetMarkup", "Snapshot", "EncodeJSON", "DecodeJSON", "NumericPolicy", "Present", "PublicationPlan", "Publish", "Project"], groups: ["Documents"], permissions: [], provides: ["rix.document.report@1", "rix.document.report@2", "rix.document.template@1", "rix.document.assets@1", "rix.output.document@1"], schemas: ["rix.document.report@1", "rix.document.theme@1", "rix.document.bibliography@1", "rix.document.citation@1", "rix.document.assets@1", "rix.document.numbering@1", "rix.document.template@1", "rix.document.target-markup@1", "rix.output.document@1", "rix.numeric-presentation@1", "rix.publication-plan@1", "rix.publication-project@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:document" }, { sourcePath: "bundled:document", kind: "host" });
   catalog.registerInstaller("document", install5);
   catalog.addMetadata({ id: "draw", description: "Convenient 2D drawing helpers that produce core Graphics nodes.", kind: "host", mount: "draw", exports: ["Line", "Polyline", "Polygon", "Arrow", "Arc", "Ellipse", "Dimension", "Grid", "Label", "Box", "Circle", "Style", "Viewport", "ViewportPoint", "Bounds", "Anchor", "From", "Trim", "Marker", "Symbol", "UseSymbol", "PlaceLabels"], groups: ["Draw"], permissions: [], provides: ["rix.draw@1", "rix.draw.drawable@1"], schemas: ["rix.draw.symbol@1", "rix.draw.adapter-result@1", "rix.draw.label-layout@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:draw" }, { sourcePath: "bundled:draw", kind: "host" });
   catalog.registerInstaller("draw", install);
@@ -9827,7 +10324,7 @@ defaultEnabled: false
 .Host.Register("arrayRixDescribe", (values) -> @"count @{values.Len()}; sum @{values.Reduce((total, value) -> total + value, 0)}", "Summarize an array of Integers", ["Examples"]);
 .Host.Register("arrayRixReverse", (values) -> values.Reverse(), "Reverse an array", ["Examples"]);
 `, sourcePath: "bundled:example-array-rix", kind: "rix" });
-  catalog.addMetadata({ id: "float", description: "Configurable IEEE-754 binary32/binary64 conversion, diagnostics, and optional approximate math.", kind: "host", mount: "float", exports: ["Float", "Binary32", "Binary64", "Format", "Classify", "Diagnostics", "NextUp", "NextDown", "NextAfter", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Asin", "Acos", "Atan", "Atan2", "Log", "Ln", "Log10", "Exp", "Sum", "Dot", "Complex", "ComplexAdd", "ComplexSub", "ComplexMul", "ComplexDiv", "ComplexConjugate", "ComplexAbs"], groups: ["ApproximateMath", "Float"], provides: ["rix.float@2"], schemas: ["rix.float.classification@1", "rix.float.algorithm-result@1", "rix.float.error-estimate@1", "rix.float.complex@1"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
+  catalog.addMetadata({ id: "float", description: "Configurable IEEE-754 binary32/binary64 conversion, diagnostics, and optional approximate math.", kind: "host", mount: "float", exports: ["Tensor", "ToShaped", "MatMul", "Float", "Binary32", "Binary64", "Format", "Classify", "Diagnostics", "NextUp", "NextDown", "NextAfter", "Interval", "Round", "Floor", "Ceiling", "Abs", "Sqrt", "Sin", "Cos", "Tan", "Asin", "Acos", "Atan", "Atan2", "Log", "Ln", "Log10", "Exp", "Sum", "Dot", "Complex", "ComplexAdd", "ComplexSub", "ComplexMul", "ComplexDiv", "ComplexConjugate", "ComplexAbs"], groups: ["ApproximateMath", "Float"], provides: ["rix.float@2"], schemas: ["rix.float.tensor@1", "rix.float.classification@1", "rix.float.algorithm-result@1", "rix.float.error-estimate@1", "rix.float.complex@1"], permissions: [], defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:float" }, { sourcePath: "bundled:float", kind: "host" });
   catalog.registerInstaller("float", install2);
   catalog.addMetadata({ id: "fracfun", description: "Form-preserving callable polynomial and rational expressions with explicit transformations and canonical projections.", kind: "host", mount: "fracfun", aliases: ["fractionFunction", "ff"], exports: ["FractionFunction", "Parse", "Var", "Fun", "Factor", "SquareFree", "PartialFractions", "PoleZeroEvidence", "RemovableHoleEvidence", "TransformationGrid"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction@1", "rix.rational-function@1"], provides: ["rix.fraction-function@1", "rix.fraction-function.presentation@1", "rix.fraction-function.divisor-evidence@1", "rix.fraction-function.removable-hole-evidence@1"], schemas: ["rix.fraction-function@1", "rix.fraction-function.presentation@1", "rix.fraction-function.square-free-pair@1", "rix.fraction-function.divisor-evidence@1", "rix.fraction-function.removable-hole-evidence@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fracfun" }, { sourcePath: "bundled:fracfun", kind: "host" });
   catalog.registerInstaller("fracfun", install3);
@@ -10244,17 +10741,17 @@ fractalsNamespace._proto = {=
 };
 .Host.RegisterValue("fractals", fractalsNamespace, "Pure-RiX chaos and fractal mathematics with portable Graphics lowering", ["Chaos", "Fractals", "Graphics", "Exact"]);
 `, sourcePath: "bundled:fractals", kind: "rix" });
-  catalog.addMetadata({ id: "fraction", description: "Representation-sensitive fractions, fraction intervals, mediants, and exact classroom policies.", kind: "rix", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Interval", "Infinity", "Parse", "FromSternBrocotPath", "ContinuedFraction", "FromContinuedFraction", "FareySearch"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1", "rix.fraction-interval@1", "rix.fraction-cf-adapter@1"], schemas: ["rix.fraction@1", "rix.fraction-interval@1", "rix.fraction.continued-fraction@1", "rix.fraction.continued-fraction-result@1", "rix.fraction.farey-search@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { source: `/**
+  catalog.addMetadata({ id: "fraction", description: "Representation-sensitive fractions, fraction intervals, mediants, and exact classroom policies.", kind: "rix", mount: "fraction", aliases: ["frac", "f"], exports: ["Fraction", "Interval", "Infinity", "Parse", "FromSternBrocotPath", "ContinuedFraction", "FromContinuedFraction", "FareySearch", "Derivation", "CoefficientDerivation", "CheckDerivation", "DerivationView"], groups: ["Algebra", "Exact", "Symbolic"], permissions: [], provides: ["rix.fraction@1", "rix.fraction-interval@1", "rix.fraction-cf-adapter@1"], schemas: ["rix.fraction@1", "rix.fraction-interval@1", "rix.fraction.continued-fraction@1", "rix.fraction.continued-fraction-result@1", "rix.fraction.farey-search@1", "rix.fraction.derivation@1", "rix.fraction.derivation-view@1", "rix.continued-fraction.derivation@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:fraction" }, { source: `/**
 id: fraction
 description: Representation-sensitive fractions, fraction intervals, mediants, and exact classroom policies.
 kind: rix
 mount: fraction
 aliases: [frac, f]
-exports: [Fraction, Interval, Infinity, Parse, FromSternBrocotPath, ContinuedFraction, FromContinuedFraction, FareySearch]
+exports: [Fraction, Interval, Infinity, Parse, FromSternBrocotPath, ContinuedFraction, FromContinuedFraction, FareySearch, Derivation, CoefficientDerivation, CheckDerivation, DerivationView]
 groups: [Algebra, Exact, Symbolic]
 permissions: []
 provides: [rix.fraction@1, rix.fraction-interval@1, rix.fraction-cf-adapter@1]
-schemas: [rix.fraction@1, rix.fraction-interval@1, rix.fraction.continued-fraction@1, rix.fraction.continued-fraction-result@1, rix.fraction.farey-search@1]
+schemas: [rix.fraction@1, rix.fraction-interval@1, rix.fraction.continued-fraction@1, rix.fraction.continued-fraction-result@1, rix.fraction.farey-search@1, rix.fraction.derivation@1, rix.fraction.derivation-view@1, rix.continued-fraction.derivation@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -10647,6 +11144,146 @@ FractionFareySearch(value, options ?= {= }) -> {;
     };
 };
 
+/* Portable evidence uses the same public algorithms as the Fraction methods. */
+FractionEvidenceBounded(value) -> {;
+    exact = FractionPromote(value,"Fraction derivation input");
+    (FractionNumerator(exact).BitLength() <= 16384 && FractionDenominator(exact).BitLength() <= 16384)
+      ?: exact ?_ .Error("Fraction derivation component budget exceeded (16384 bits)");
+};
+FractionEvidenceRational(value) -> (FractionNumerator(value)/FractionDenominator(value)) ~!: :Rational;
+FractionEvidenceOptions(options) -> {;
+    options ? :Map ?: _ ?_ .Error("Fraction derivation options must be a Map");
+    steps = FractionInteger(FractionOption(options,"maxsteps",128),"maxSteps");
+    terms = FractionInteger(FractionOption(options,"maxterms",32),"maxTerms");
+    denominator = FractionInteger(FractionOption(options,"maxdenominator",1000000),"maxDenominator");
+    (steps >= 0 && steps <= 4096 && terms >= 1 && terms <= 256 && denominator >= 1 && denominator.BitLength() <= 16384)
+      ?: {= maxSteps=steps,maxTerms=terms,maxDenominator=denominator }
+      ?_ .Error("Fraction derivation limits: maxSteps 0..4096, maxTerms 1..256, positive bounded maxDenominator");
+};
+FractionDerivation(kind,input,options ?= {= }) -> {;
+    [:mediant,:parentage,:fareyPath,:convergents,:coefficients].Includes(kind)
+      ?: _ ?_ .Error("Unknown Fraction derivation kind");
+    limits = FractionEvidenceOptions(options);
+    source = kind==:mediant
+      ?: {; ((@input ? :Array) && @input.Len()==2) ?: _ ?_ .Error("Mediant derivation requires two inputs"); @input.Map((value)->FractionEvidenceBounded(value)); }
+      ?_ kind==:coefficients
+      ?: {;
+          ((@input ? :Array) && @input.Len()>=1 && @input.Len()<=256) ?: _ ?_ .Error("Coefficient derivation requires 1..256 integers");
+          @input.Map((value,index)->{; exact=FractionInteger(value,"coefficient");(index==1 || exact>0) ?: _ ?_ .Error("Continued-fraction tail coefficients must be positive");exact.BitLength()<=16384 ?: exact ?_ .Error("Coefficient bit budget exceeded"); });
+      }
+      ?_ FractionEvidenceBounded(input);
+    result := _; status := :exact; steps := []; details := {= }; error := _;
+    kind==:mediant
+      ?: {;
+          @result ~= FractionMediant(@source[1],@source[2]);
+          @steps ~= [{= rule=:componentAddition,left=@source[1],right=@source[2],value=@result }];
+      }
+      ?_ kind==:parentage
+      ?: {;
+          FractionFinite(@source,"Parentage source");
+          parents=FractionFareyParents(@source);
+          signedRoot=FractionNumerator(@source)==0 && FractionDenominator(@source)==1;
+          @result ~= signedRoot ?: FractionRaw(0,1) ?_ FractionMediant(parents[1],parents[2]);
+          @details ~= {= parents=parents,rule=signedRoot ?: :signedRootConvention ?_ :componentAddition };
+          @steps ~= [{= rule=@details[:rule],left=parents[1],right=parents[2],value=@result }];
+      }
+      ?_ kind==:fareyPath
+      ?: {;
+          walk=FractionFareySearch(@source,@limits);
+          @result ~= walk[:result];@status ~= walk[:status];@steps ~= walk[:trace];@details ~= walk;
+          @error ~= FractionEvidenceRational(@source)-FractionEvidenceRational(@result);
+      }
+      ?_ {;
+          target=@kind==:convergents ?: FractionEvidenceRational(FractionFinite(@source)) ?_ _;
+          terms=@kind==:convergents ?: target.ToContinuedFraction({= maxTerms=@limits[:maxterms]+1 }) ?_ @source;
+          truncated=terms.Len()>@limits[:maxterms];
+          coefficients=truncated ?: terms.Slice(1,@limits[:maxterms]+1) ?_ terms;
+          p0:=0;p1:=1;q0:=1;q1:=0;blocked:=_;used:=[];
+          {@ index=1; index<=@coefficients.Len() && !@blocked; {;
+              a=@coefficients[index];
+              (index==1 || a>0) ?: _ ?_ .Error("Continued-fraction tail coefficients must be positive");
+              pn=a*@p1+@p0;qn=a*@q1+@q0;
+              (pn.BitLength()>16384 || qn.BitLength()>16384)
+                ?: {; @blocked ~= 1; }
+                ?_ {;
+                    current=FractionRaw(@pn,@qn);exact=FractionEvidenceRational(current);
+                    delta=@target==_ ?: _ ?_ @target-exact;
+                    @steps ~= @steps.Push({= index=@index,rule=:continuantRecurrence,coefficient=@a,
+                        previousNumerators=[@p0,@p1],previousDenominators=[@q0,@q1],
+                        value=current,rational=exact,determinant=@pn*@q1-@p1*@qn,error=delta,
+                        errorBound=delta==_ ?: _ ?_ delta.Abs(),errorInterval=delta==_ ?: _ ?_ delta:delta });
+                    @used ~= @used.Push(@a);@result ~= current;@error ~= delta;
+                    @p0 ~= @p1;@p1 ~= @pn;@q0 ~= @q1;@q1 ~= @qn;
+                };
+          };index+=1 };
+          @status ~= blocked ?: :componentBudgetExhausted ?_ truncated ?: :termBudgetExhausted ?_ :exact;
+          @details ~= {= coefficients=used,sourceTerms=@kind==:coefficients ?: @source.Len() ?_ _,
+              exactTarget=target,complete=@status==:exact,retainedTerms=used.Len() };
+      };
+    result==_ ?: _ ?_ FractionEvidenceBounded(result);
+    .ImmutableValue({= schema="rix.fraction.derivation@1",checker="fraction-replay@1",kind=kind,input=source,options=limits,
+        status=status,value=result,error=error,steps=steps,details=details,work={= steps=steps.Len(),maxSteps=limits[:maxsteps],maxTerms=limits[:maxterms] } });
+};
+FractionEvidenceSame(left,right,depth ?= 0) -> {;
+    depth<=128 ?: _ ?_ .Error("Fraction evidence depth budget exceeded");
+    left ? :Fraction
+      ?: ((right ? :Fraction) && FractionSamePair(left,right))
+      ?_ (left ? :FractionInterval)
+      ?: ((right ? :FractionInterval) && FractionSamePair(FractionIntervalLow(left),FractionIntervalLow(right)) && FractionSamePair(FractionIntervalHigh(left),FractionIntervalHigh(right)))
+      ?_ (left ? :RationalInterval)
+      ?: ((right ? :RationalInterval) && left.Low()==right.Low() && left.High()==right.High() && left.ToString()==right.ToString())
+      ?_ (left ? :Array)
+      ?: ((right ? :Array) && left.Len()==right.Len() && left.Reduce((same,value,index)->same && FractionEvidenceSame(value,@right[index],@depth+1),1))
+      ?_ (left ? :Tuple)
+      ?: ((right ? :Tuple) && left.Len()==right.Len() && left.Reduce((same,value,index)->same && FractionEvidenceSame(value,@right[index],@depth+1),1))
+      ?_ (left ? :Map)
+      ?: ((right ? :Map) && left.Len()==right.Len() && left.ReduceKeys((same,key,value)->same && @right.Has(key) && FractionEvidenceSame(value,@right[key],@depth+1),1))
+      ?_ left==right;
+};
+FractionCoefficientDerivation(coefficients,sourceCoefficients ?= _) -> {;
+    prefix=FractionDerivation(:coefficients,coefficients,{= maxTerms=256 });
+    full=sourceCoefficients==_ ?: _ ?_ FractionDerivation(:coefficients,sourceCoefficients,{= maxTerms=256 });
+    (full==_ || (coefficients.Len()<=sourceCoefficients.Len() && FractionEvidenceSame(coefficients,sourceCoefficients.Slice(1,coefficients.Len()+1))))
+      ?: _ ?_ .Error("Convergent coefficients must prefix the finite source");
+    enclosure=(full!=_ && full[:status]==:exact)
+      ?: {; target=FractionEvidenceRational(@full[:value]);target:target; }
+      ?_ (full==_ && prefix[:steps].Len()>=2)
+      ?: {;
+          rows=@prefix[:steps];n=rows.Len();
+          rows[n-1][:rational]:rows[n][:rational];
+      }
+      ?_ _;
+    errors=prefix[:steps].Map((step)->@enclosure==_ ?: _ ?_ (@enclosure.Low()-step[:rational]):(@enclosure.High()-step[:rational]));
+    status=enclosure==_ ?: :unresolved ?_ full==_ ?: :conditional ?_ :exact;
+    .ImmutableValue({= schema="rix.continued-fraction.derivation@1",checker="fraction-replay@1",
+        kind=full==_ ?: :positiveTailAssumed ?_ :finite,status=status,prefix=prefix,source=full,
+        value=prefix[:value],enclosure=enclosure,errors=errors,
+        evidenceLevel=full==_ ?: :assumedPositiveTail ?_ :exactFinite,
+        premise=full==_ ?: "All unobserved simple continued-fraction tail coefficients are positive integers; source identity is not checked by this snapshot." ?_ _,
+        certified=full!=_ && status==:exact });
+};
+
+FractionCheckDerivation(candidate) -> {;
+    valid=(candidate ? :Map) && (["rix.fraction.derivation@1","rix.continued-fraction.derivation@1"].Includes(candidate[:schema])) && candidate[:checker]=="fraction-replay@1";
+    valid ?_> {= accepted=_,reason=:unsupportedFractionEvidence };
+    replay=candidate[:schema]=="rix.continued-fraction.derivation@1"
+      ?: FractionCoefficientDerivation(candidate[:prefix][:input],candidate[:source]==_ ?: _ ?_ candidate[:source][:input])
+      ?_ FractionDerivation(candidate[:kind],candidate[:input],candidate[:options]);
+    accepted=FractionEvidenceSame(candidate,replay);
+    {= accepted=accepted,reason=accepted ?: _ ?_ :fractionEvidenceMismatch,status=replay[:status],mismatches=candidate.Keys().Filter((key)->!FractionEvidenceSame(@candidate[key],@replay[key])) };
+};
+FractionDerivationView(candidate) -> {;
+    FractionCheckDerivation(candidate)[:accepted] ?_> .Error("Cannot render unchecked fraction derivation");
+    kind=candidate[:kind];
+    cf=candidate[:schema]=="rix.continued-fraction.derivation@1";
+    steps=cf ?: candidate[:prefix][:steps] ?_ candidate[:steps];
+    premise=candidate[:premise]==_ ?: "Finite coefficient replay is exact." ?_ candidate[:premise];
+    rows=steps.Map((step,index)->[index,step[:rule]==_ ?: :fareyMediant ?_ step[:rule],step[:value]==_ ?: step[:candidate] ?_ step[:value],@cf ?: @candidate[:errors][index] ?_ step[:error]==_ ?: " " ?_ step[:error]]);
+    .Fragment([.Heading(1,@"Fraction derivation: @{kind}"),.Paragraph(@"Status: @{candidate[:status]}; exact source pairs and every retained step are preserved."),
+        .Paragraph(cf ?: @"Evidence: @{candidate[:evidenceLevel]}. @{premise}" ?_ "Computed error entries use exact source values."),
+        .Table(["Step","Rule","Value","Exact error or conditional interval"],rows)],{= schema="rix.fraction.derivation-view@1",source=candidate });
+};
+
 FractionString(value) -> {;
     numerator = FractionNumerator(value);
     denominator = FractionDenominator(value);
@@ -10804,22 +11441,26 @@ fractionNamespace._proto = {=
     FromSternBrocotPath = (self, path) -> FractionFromPath(path),
     ContinuedFraction = (self, value) -> FractionContinuedFraction(value),
     FromContinuedFraction = (self, source, options ?= {= }) -> FractionFromContinuedFraction(source,options),
-    FareySearch = (self, value, options ?= {= }) -> FractionFareySearch(value,options)
+    FareySearch = (self, value, options ?= {= }) -> FractionFareySearch(value,options),
+    Derivation = (self, kind, input, options ?= {= }) -> FractionDerivation(kind,input,options),
+    CoefficientDerivation = (self, coefficients, source ?= _) -> FractionCoefficientDerivation(coefficients,source),
+    CheckDerivation = (self, candidate) -> FractionCheckDerivation(candidate),
+    DerivationView = (self, candidate) -> FractionDerivationView(candidate)
 };
 
 .Host.RegisterCallableValue("fraction", fractionNamespace, "Representation-sensitive unreduced fractions", ["Algebra", "Exact", "Symbolic"]);
 `, sourcePath: "bundled:fraction", kind: "rix" });
-  catalog.addMetadata({ id: "geometry", description: "Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.", kind: "rix", mount: "geometry", exports: ["Point", "Line", "Segment", "Ray", "Polygon", "Circle", "Center", "RadiusSquared", "Conic", "Ellipse", "Parabola", "Hyperbola", "Locus", "Implicit", "Affine", "Projective", "Transform", "Constraint", "Constraints", "SquaredDistance", "Distance", "Length", "Area", "CircularAngle", "Angle", "Centroid", "Incenter", "Orthocenter", "AngleBisector", "Perpendicular", "ParallelThrough", "Midpoint", "PerpendicularBisector", "Circumcircle", "Translate", "RotateQuarterTurns", "Rotate", "ReflectAcross", "Intersect", "Points", "Status", "UncertainPoint", "UncertainBounds", "TransformUncertain", "ConstructionGraph", "ConstructionRecord", "ImportConstruction", "AddPoint", "AddLine", "AddCircle", "AddIntersection", "AddTransform", "AddMeasurement", "Drag", "DragMany", "ConstrainedDrag", "RepairSuggestions", "Undo", "Redo", "Refine", "Draw", "Workbench", "AuthoringWorkbench"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1", "rix.polynomial.algorithms@1", "rix.algebraic-real@1"], provides: ["rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], schemas: ["rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { source: `/**
+  catalog.addMetadata({ id: "geometry", description: "Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.", kind: "rix", mount: "geometry", exports: ["TraceImplicit", "CheckImplicitTrace", "RefineImplicitTrace", "IntersectionBoxes", "ParameterConstruction", "ParameterDrag", "ParameterHandle", "Point", "Line", "Segment", "Ray", "Polygon", "Circle", "Center", "RadiusSquared", "Conic", "Ellipse", "Parabola", "Hyperbola", "Locus", "Implicit", "Affine", "Projective", "Transform", "Constraint", "Constraints", "SquaredDistance", "Distance", "Length", "Area", "CircularAngle", "Angle", "Centroid", "Incenter", "Orthocenter", "AngleBisector", "Perpendicular", "ParallelThrough", "Midpoint", "PerpendicularBisector", "Circumcircle", "Translate", "RotateQuarterTurns", "Rotate", "ReflectAcross", "Intersect", "Points", "Status", "UncertainPoint", "UncertainBounds", "TransformUncertain", "ConstructionGraph", "ConstructionRecord", "ImportConstruction", "AddPoint", "AddLine", "AddCircle", "AddIntersection", "AddTransform", "AddMeasurement", "Drag", "DragMany", "ConstrainedDrag", "RepairSuggestions", "Undo", "Redo", "Refine", "Draw", "Workbench", "AuthoringWorkbench"], groups: ["Geometry", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1", "rix.polynomial.algorithms@1", "rix.algebraic-real@1"], provides: ["rix.geometry.implicit-trace@1", "rix.geometry.parameter-construction@1", "rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], schemas: ["rix.geometry.implicit-trace@1", "rix.geometry.parameter-construction@1", "rix.geometry@1", "rix.geometry.intersection@1", "rix.geometry.constraint@1", "rix.geometry.refinement@1", "rix.geometry.circular-angle@1", "rix.geometry.uncertain-point@1", "rix.geometry.construction-graph@1", "rix.geometry.construction-record@1", "rix.geometry.workbench@1", "rix.geometry.authoring-policy@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:geometry" }, { source: `/**
 id: geometry
 description: Pure-RiX exact geometry, transformations, conics, constraints, and bounded portable Graphics refinement.
 kind: rix
 mount: geometry
-exports: [Point, Line, Segment, Ray, Polygon, Circle, Center, RadiusSquared, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, AddPoint, AddLine, AddCircle, AddIntersection, AddTransform, AddMeasurement, Drag, DragMany, ConstrainedDrag, RepairSuggestions, Undo, Redo, Refine, Draw, Workbench, AuthoringWorkbench]
+exports: [TraceImplicit, CheckImplicitTrace, RefineImplicitTrace, IntersectionBoxes, ParameterConstruction, ParameterDrag, ParameterHandle, Point, Line, Segment, Ray, Polygon, Circle, Center, RadiusSquared, Conic, Ellipse, Parabola, Hyperbola, Locus, Implicit, Affine, Projective, Transform, Constraint, Constraints, SquaredDistance, Distance, Length, Area, CircularAngle, Angle, Centroid, Incenter, Orthocenter, AngleBisector, Perpendicular, ParallelThrough, Midpoint, PerpendicularBisector, Circumcircle, Translate, RotateQuarterTurns, Rotate, ReflectAcross, Intersect, Points, Status, UncertainPoint, UncertainBounds, TransformUncertain, ConstructionGraph, ConstructionRecord, ImportConstruction, AddPoint, AddLine, AddCircle, AddIntersection, AddTransform, AddMeasurement, Drag, DragMany, ConstrainedDrag, RepairSuggestions, Undo, Redo, Refine, Draw, Workbench, AuthoringWorkbench]
 groups: [Geometry, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1, rix.polynomial.algorithms@1, rix.algebraic-real@1]
-provides: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1, rix.geometry.construction-record@1, rix.geometry.workbench@1, rix.geometry.authoring-policy@1]
-schemas: [rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1, rix.geometry.construction-record@1, rix.geometry.workbench@1, rix.geometry.authoring-policy@1]
+provides: [rix.geometry.implicit-trace@1, rix.geometry.parameter-construction@1, rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1, rix.geometry.construction-record@1, rix.geometry.workbench@1, rix.geometry.authoring-policy@1]
+schemas: [rix.geometry.implicit-trace@1, rix.geometry.parameter-construction@1, rix.geometry@1, rix.geometry.intersection@1, rix.geometry.constraint@1, rix.geometry.refinement@1, rix.geometry.circular-angle@1, rix.geometry.uncertain-point@1, rix.geometry.construction-graph@1, rix.geometry.construction-record@1, rix.geometry.workbench@1, rix.geometry.authoring-policy@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -12642,8 +13283,79 @@ GeometryAuthoringWorkbench(graph,actions,options ?= {= }) -> {;
     }));
 };
 
+GeometryTraceMethods(result) -> {;
+    result._proto={=
+        Refine=(self,options ?= {= })->GeometryTraceMethods(.ImplicitTraceRefine(self,options)),
+        Check=(self)->.ImplicitTraceCheck(self)
+    };
+    .ImmutableValue(result);
+};
+GeometryTraceImplicit(expression,gradient,box,options ?= {= }) -> GeometryTraceMethods(.ImplicitTrace(expression,gradient,box,options));
+GeometryParameterAttempt={>
+    (builder,parameter) ?- [Apply=builder,candidate=Apply(parameter)] -> {= ok=1,result=candidate },
+    (builder,parameter) -> {= ok=_,result=_,diagnostic=:constructionCallbackRejected }
+};
+GeometryParameterCertified(candidate) ?!- [
+    candidate ? :Map ?_> _,
+    candidate.Has("schema") ?_> _
+] -> {;
+    schema=candidate[:schema];
+    schema!="rix.numerics.interval-newton-box@1" ?_> (.ValidatedBoxCheck(candidate)[:certified]&&candidate[:rootExistence]==:unique);
+    schema!="rix.numerics.box-subdivision@1" ?_> (.numerics.CheckBoxSubdivision(candidate)[:certified]&&candidate[:status]==:complete&&candidate[:unique].Len()>0);
+    schema!="rix.geometry.implicit-trace@1" ?_> (.ImplicitTraceCheck(candidate)[:certified]&&candidate[:status]==:complete&&candidate[:arcs].Len()>0);
+    _;
+};
+GeometryParameterUpdate(state,parameter,operation ?= :parameterDrag) ?!- [
+    state ? :Map ?_> .Error("geometry.ParameterDrag requires a parameter construction"),
+    state[:schema]=="rix.geometry.parameter-construction@1" ?_> .Error("geometry.ParameterDrag requires a parameter construction"),
+    state[:maxHistory] ? :Integer ?_> .Error("geometry parameter maxHistory requires an Integer"),
+    state[:history] ? :Array ?_> .Error("geometry parameter history requires an Array"),
+    state[:maxHistory]>=0&&state[:maxHistory]<=256 ?_> .Error("geometry parameter maxHistory must be between 0 and 256"),
+    state[:history].Len()<=256 ?_> .Error("geometry parameter history exceeds its budget"),
+    state[:lastCertified]==_||GeometryParameterCertified(state[:lastCertified]) ?_> .Error("geometry parameter retained evidence is not certified")
+] -> {;
+    position=GeometryNumericSequence(parameter,2,"geometry parameter position");
+    position.All((coordinate)->@"@{coordinate.Numerator()}".Len()<=4097&&@"@{coordinate.Denominator()}".Len()<=4096)
+      ?_> .Error("geometry parameter exceeds its rational digit budget");
+    builder=state[:builder];attempt=GeometryParameterAttempt(builder,position);
+    accepted=attempt[:ok]&&GeometryParameterCertified(attempt[:result]);
+    previous=state[:lastCertified];
+    diagnostic=accepted ?: _ ?_ attempt[:ok] ?: :constraintsUnproved ?_ :constructionCallbackRejected;
+    event={= operation=operation,from=state[:parameter],requested=position,accepted=accepted,diagnostic=diagnostic };
+    history:=state[:history].Push(event);
+    {@ index=1;@history.Len()>@state[:maxHistory];{; @history~=@history.DropFirst();};index+=1};
+    .DeepMutable({= schema="rix.geometry.parameter-construction@1",builder=builder,
+        parameter=accepted ?: position ?_ state[:parameter],requestedParameter=position,
+        lastCertified=accepted ?: attempt[:result] ?_ previous,proposal=attempt[:result],
+        status=accepted ?: :accepted ?_ previous==_ ?: :unresolved ?_ :retainedLastCertified,
+        diagnostic=diagnostic,history=history,maxHistory=state[:maxHistory],
+        repair=accepted ?: [] ?_ [{= action=:changeParameter,label="Move the parameter into a certifiable region" },
+            {= action=:refineSearch,label="Increase bounded work or select a different search box" }]
+    },_);
+};
+GeometryParameterConstruction(builder,parameter,options ?= {= }) ?!- [
+    maxHistory=GeometryOption(options,"maxhistory",32) ~!: :Integer,
+    maxHistory>=0&&maxHistory<=256 ?_> .Error("geometry parameter maxHistory must be between 0 and 256")
+] -> GeometryParameterUpdate({= schema="rix.geometry.parameter-construction@1",builder=builder,parameter=parameter,lastCertified=_,history=[],maxHistory=maxHistory },parameter,:create);
+GeometryParameterHandle(target,options ?= {= }) -> {;
+    state=$$target.Get();
+    state[:schema]=="rix.geometry.parameter-construction@1" ?_> .Error("geometry.ParameterHandle requires a parameter construction node");
+    .Graphics.DragPoint({= target=$$target,position=state[:parameter],
+        action=(current,position)->GeometryParameterUpdate(current,[position[1],position[2]]),
+        label=GeometryOption(options,"label","Move construction parameter"),
+        coordinateSystem=GeometryOption(options,"coordinatesystem",{= view=[-2,-2,2,2],size=[400,400] }),
+        style=GeometryOption(options,"style",{= hitId="parameter-handle" }) });
+};
+
 geometryNamespace = {= };
 geometryNamespace._proto = {=
+    TraceImplicit=(self,expression,gradient,box,options ?= {= })->GeometryTraceImplicit(expression,gradient,box,options),
+    CheckImplicitTrace=(self,result)->.ImplicitTraceCheck(result),
+    RefineImplicitTrace=(self,result,options ?= {= })->GeometryTraceMethods(.ImplicitTraceRefine(result,options)),
+    IntersectionBoxes=(self,expressions,jacobian,box,options ?= {= })->.numerics.SubdivideBoxes(expressions,jacobian,box,options),
+    ParameterConstruction=(self,builder,parameter,options ?= {= })->GeometryParameterConstruction(builder,parameter,options),
+    ParameterDrag=(self,state,parameter)->GeometryParameterUpdate(state,parameter),
+    ParameterHandle=(self,target,options ?= {= })->GeometryParameterHandle($$target,options),
     Point=(self, first, second ?= _, options ?= {= })->GeometryPoint(first, second, options),
     Line=(self, first, second ?= _, options ?= {= })->GeometryLine(first, second, options),
     Segment=(self, first, second ?= _, options ?= {= })->GeometrySegment(first, second, options),
@@ -12710,7 +13422,7 @@ geometryNamespace._proto = {=
 };
 .Host.RegisterValue("geometry", geometryNamespace, "Exact geometry, transformations, conics, constraints, and bounded Graphics refinement", ["Geometry", "Graphics", "Exact"]);
 `, sourcePath: "bundled:geometry", kind: "rix" });
-  catalog.addMetadata({ id: "gif", description: "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", kind: "host", mount: "gif", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], requires: ["rix.renderer.png@1"], provides: ["rix.renderer.gif@1", "rix.renderer.gif@2"], schemas: ["rix.gif.render@1", "rix.gif.render@2"], targets: ["gif", "image/gif"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gif" }, { sourcePath: "bundled:gif", kind: "host" });
+  catalog.addMetadata({ id: "gif", description: "Deterministic animated GIF rendering from Slides, Timelines, or Snapshots through PNG frames.", kind: "host", mount: "gif", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], requires: ["rix.renderer.png@1"], provides: ["rix.renderer.gif@1", "rix.renderer.gif@2", "rix.renderer.gif-frames@1"], schemas: ["rix.gif.render@1", "rix.gif.render@2", "rix.animation-export@1"], targets: ["gif", "image/gif", "gif-frames"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gif" }, { sourcePath: "bundled:gif", kind: "host" });
   catalog.registerInstaller("gif", install19);
   catalog.addMetadata({ id: "gltf", description: "Browser-safe glTF 2.0 JSON exporter for retained Scene3D values.", kind: "host", mount: "gltf", exports: ["Render"], groups: ["Renderers", "Scene3D"], permissions: [], requires: ["rix.scene3d@1"], provides: ["rix.renderer.gltf@1"], targets: ["gltf", "model/gltf+json"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], schemas: [], operatorFiles: [], ignore: false, sourcePath: "bundled:gltf" }, { sourcePath: "bundled:gltf", kind: "host" });
   catalog.registerInstaller("gltf", install17);
@@ -12999,23 +13711,23 @@ graphNamespace._proto={=
   catalog.registerInstaller("html", install12);
   catalog.addMetadata({ id: "latex", description: "Standalone LaTeX renderer for portable RiX documents and figures.", kind: "host", mount: "latex", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.latex@1", "rix.renderer.latex@2"], schemas: ["rix.latex.render@2"], targets: ["latex", "text/x-tex"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:latex" }, { sourcePath: "bundled:latex", kind: "host" });
   catalog.registerInstaller("latex", install14);
-  catalog.addMetadata({ id: "linalg", description: "Pure-RiX exact dense linear algebra and coordinate-aware tensor transformations.", kind: "rix", mount: "linalg", exports: ["Rref", "Rank", "Determinant", "Inverse", "Solve", "Bareiss", "LU", "LDU", "QR", "DeterminantCertificate", "RowSpace", "ColumnSpace", "NullSpace", "VectorSpace", "DualSpace", "Frame", "Tensor", "Vector", "Covector", "LinearMap", "Compose", "Pushforward", "Pullback", "TensorProduct", "Contract", "PolynomialSpace", "Realize", "Reconstruct", "Serialize", "ChangeMatrix", "Transform", "Transform!", "Components", "Pair", "SameTensor"], groups: ["LinearAlgebra", "Exact"], permissions: [], requires: ["rix.polynomial@1"], provides: ["rix.linear-algebra@2", "rix.linear-algebra@1", "rix.tensor@1", "rix.linear-realization@1"], schemas: ["rix.linalg.result@1", "rix.linalg.bareiss@1", "rix.linalg.factorization@1", "rix.linalg.qr@1", "rix.linalg.determinant-certificate@1", "rix.linalg.subspace@1", "rix.linalg.vector-space@1", "rix.linalg.frame@1", "rix.linalg.tensor@1", "rix.linalg.linear-map@1", "rix.linalg.linear-realization@1", "rix.linalg.polynomial-space@1", "rix.linalg.identity-record@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:linalg" }, { source: `/**
+  catalog.addMetadata({ id: "linalg", description: "Pure-RiX exact linear algebra, Rational spectral evidence and finite-support tensors.", kind: "rix", mount: "linalg", exports: ["VerifyProjection", "SparseCoordinates", "RestoreCoordinates", "VerifyCoordinates", "CharacteristicPolynomial", "MinimalPolynomial", "RationalEigenspaces", "VerifySpectral", "Rref", "Rank", "Determinant", "Inverse", "Solve", "Bareiss", "LU", "LDU", "QR", "DeterminantCertificate", "RowSpace", "ColumnSpace", "NullSpace", "VectorSpace", "DualSpace", "DualFrame", "Metric", "Frame", "Tensor", "Vector", "Covector", "LinearMap", "Compose", "Pushforward", "Pullback", "TensorProduct", "Contract", "PolynomialSpace", "Realize", "Reconstruct", "SameSource", "ScalarField", "CoordinateStorage", "ExportGraph", "ImportGraph", "Serialize", "ChangeMatrix", "Transform", "Transform!", "Components", "Pair", "SameTensor"], groups: ["LinearAlgebra", "Exact"], permissions: [], requires: ["rix.polynomial@1"], provides: ["rix.linear-algebra@2", "rix.linear-algebra@1", "rix.tensor@1", "rix.linear-realization@1"], schemas: ["rix.linalg.polynomial-projection@1", "rix.linalg.spectral@1", "rix.linalg.result@1", "rix.linalg.bareiss@1", "rix.linalg.factorization@1", "rix.linalg.qr@1", "rix.linalg.determinant-certificate@1", "rix.linalg.subspace@1", "rix.linalg.vector-space@1", "rix.linalg.frame@1", "rix.linalg.metric@1", "rix.linalg.tensor@1", "rix.linalg.linear-map@1", "rix.linalg.linear-realization@1", "rix.linalg.polynomial-space@1", "rix.linalg.identity-record@1", "rix.linalg.identity-graph@1", "rix.scalar-field@1", "rix.coordinate-storage@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:linalg" }, { source: `/**
 id: linalg
-description: Pure-RiX exact dense linear algebra and coordinate-aware tensor transformations.
+description: Pure-RiX exact linear algebra, Rational spectral evidence and finite-support tensors.
 kind: rix
 mount: linalg
-exports: [Rref, Rank, Determinant, Inverse, Solve, Bareiss, LU, LDU, QR, DeterminantCertificate, RowSpace, ColumnSpace, NullSpace, VectorSpace, DualSpace, Frame, Tensor, Vector, Covector, LinearMap, Compose, Pushforward, Pullback, TensorProduct, Contract, PolynomialSpace, Realize, Reconstruct, Serialize, ChangeMatrix, Transform, Transform!, Components, Pair, SameTensor]
+exports: [VerifyProjection, SparseCoordinates, RestoreCoordinates, VerifyCoordinates, CharacteristicPolynomial, MinimalPolynomial, RationalEigenspaces, VerifySpectral, Rref, Rank, Determinant, Inverse, Solve, Bareiss, LU, LDU, QR, DeterminantCertificate, RowSpace, ColumnSpace, NullSpace, VectorSpace, DualSpace, DualFrame, Metric, Frame, Tensor, Vector, Covector, LinearMap, Compose, Pushforward, Pullback, TensorProduct, Contract, PolynomialSpace, Realize, Reconstruct, SameSource, ScalarField, CoordinateStorage, ExportGraph, ImportGraph, Serialize, ChangeMatrix, Transform, Transform!, Components, Pair, SameTensor]
 groups: [LinearAlgebra, Exact]
 permissions: []
 requires: [rix.polynomial@1]
 provides: [rix.linear-algebra@2, rix.linear-algebra@1, rix.tensor@1, rix.linear-realization@1]
-schemas: [rix.linalg.result@1, rix.linalg.bareiss@1, rix.linalg.factorization@1, rix.linalg.qr@1, rix.linalg.determinant-certificate@1, rix.linalg.subspace@1, rix.linalg.vector-space@1, rix.linalg.frame@1, rix.linalg.tensor@1, rix.linalg.linear-map@1, rix.linalg.linear-realization@1, rix.linalg.polynomial-space@1, rix.linalg.identity-record@1]
+schemas: [rix.linalg.polynomial-projection@1, rix.linalg.spectral@1, rix.linalg.result@1, rix.linalg.bareiss@1, rix.linalg.factorization@1, rix.linalg.qr@1, rix.linalg.determinant-certificate@1, rix.linalg.subspace@1, rix.linalg.vector-space@1, rix.linalg.frame@1, rix.linalg.metric@1, rix.linalg.tensor@1, rix.linalg.linear-map@1, rix.linalg.linear-realization@1, rix.linalg.polynomial-space@1, rix.linalg.identity-record@1, rix.linalg.identity-graph@1, rix.scalar-field@1, rix.coordinate-storage@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
 **/
 
-linalgState := {= nextSpaceIdentity=0, nextFrameIdentity=0, nextTensorIdentity=0, nextRepresentationIdentity=0 };
+linalgState := {= nextSpaceIdentity=0, nextFrameIdentity=0, nextTensorIdentity=0, nextRepresentationIdentity=0, dualSpaces=[], canonicalDualFrames=[], mapDualFrames=[] };
 linalgState._mutable=1;
 LinalgNextIdentity(kind) -> {;
     kind==:space
@@ -13030,6 +13742,7 @@ LinalgNextIdentity(kind) -> {;
 LinalgOption(options, key, fallback) -> options.Has(key) ?: options[key] ?_ fallback;
 
 LinalgExact(value, label ?= "value") -> {;
+    ((value ? :Integer)||(value ? :Rational)) ?_> .Error(@"@{label} must be an exact Integer or Rational");
     exact = value ~!: :Rational;
     exact == _ ?: .Error(@"@{label} must be an exact Integer or Rational") ?_ exact;
 };
@@ -13043,7 +13756,7 @@ LinalgPositiveInteger(value, label) -> {;
 LinalgVectorValues(value, label ?= "vector") -> {;
     isArray = value ? :Array;
     isShapedVector = value ? :Shaped ?: value.Shape().Len() == 1 ?_ _;
-    (isArray || isShapedVector) ?: _ ?_ .Error(@"@{label} must be an Array or rank-1 tensor");
+    (isArray || isShapedVector) ?: _ ?_ .Error(@"@{label} must be an Array or rank-1 Shaped value");
     length = isArray ?: value.Len() ?_ value.Size();
     result := [];
     {@ index = 1; index <= @length; {;
@@ -13055,18 +13768,19 @@ LinalgVectorValues(value, label ?= "vector") -> {;
 LinalgMatrixRows(value, label ?= "matrix") -> {;
     isShapedMatrix = value ? :Shaped ?: value.Shape().Len() == 2 ?_ _;
     isRows = value ? :Array;
-    (isShapedMatrix || isRows) ?: _ ?_ .Error(@"@{@label} must be a rank-2 tensor or Array of rows");
+    (isShapedMatrix || isRows) ?: _ ?_ .Error(@"@{@label} must be a rank-2 Shaped or Matrix value, or Array of rows");
     rows := [];
+    matrix = isShapedMatrix ?: value ~!: :Matrix ?_ _;
     isShapedMatrix
       ?: {;
-          shape = @value.Shape();
+          shape = @matrix.Shape();
           rowCount = shape[1];
           columnCount = shape[2];
           rowCount >= 1 && columnCount >= 1 ?: _ ?_ .Error(@"@{@label} cannot be empty");
           {@ row = 1; row <= @rowCount; {;
               entries := [];
               {@ column = 1; column <= @columnCount; {;
-                  @entries ~= @entries.Push(LinalgExact(@value[@row,column], @"@{@label} entry @{@row},@{column}"));
+                  @entries ~= @entries.Push(LinalgExact(@matrix[@row,column], @"@{@label} entry @{@row},@{column}"));
               }; column += 1 };
               @rows ~= @rows.Push(entries);
           }; row += 1 };
@@ -13092,15 +13806,14 @@ LinalgFlattenRows(rows) -> {;
     flat;
 };
 
-LinalgVectorTensor(values) -> values ~!: :Shaped;
+LinalgVectorStorage(values) -> values ~!: :Shaped;
 
 LinalgShapedFromFlat(flat, shape) -> (flat ~!: :Shaped).Reshape(shape);
 
-LinalgMatrixTensor(rows) -> {;
+LinalgMatrixValue(rows) -> {;
     rows.Len() >= 1 && rows[1].Len() >= 1 ?: _ ?_ .Error("Matrix cannot be empty");
     value = LinalgShapedFromFlat(LinalgFlattenRows(rows), {: rows.Len(), rows[1].Len() });
-    value.__type = "Matrix";
-    value;
+    value ~!: :Matrix;
 };
 
 LinalgZeros(count) -> {;
@@ -13294,7 +14007,7 @@ LinalgBareissRows(source) -> {;
                 }
                 ?_ _;
               pivot = @rows[@pivotRow][@column];
-              before = LinalgMatrixTensor(LinalgCopyRows(@rows));
+              before = LinalgMatrixValue(LinalgCopyRows(@rows));
               {@ row = @pivotRow+1; row <= @rowCount; {;
                   leading = @rows[row][@column];
                   replacement := @rows[row];
@@ -13313,7 +14026,7 @@ LinalgBareissRows(source) -> {;
                   previousPivot=@previousPivot,
                   swapped=didSwap ?: 1 ?_ _,
                   before=before,
-                  after=LinalgMatrixTensor(LinalgCopyRows(@rows))
+                  after=LinalgMatrixValue(LinalgCopyRows(@rows))
               });
               @previousPivot ~= pivot;
               @pivotRow += 1;
@@ -13349,14 +14062,14 @@ LinalgVerifyBareiss(value) -> {;
 
 LinalgBareiss(value) -> {;
     sourceRows = LinalgMatrixRows(value,"Bareiss matrix");
-    source = LinalgMatrixTensor(sourceRows);
+    source = LinalgMatrixValue(sourceRows);
     core = LinalgBareissRows(sourceRows);
     result = {=
         valueKind=:bareissElimination,
         schema="rix.linalg.bareiss@1",
         exact=1,
         source=source,
-        echelon=LinalgMatrixTensor(core[:rows]),
+        echelon=LinalgMatrixValue(core[:rows]),
         pivots=core[:pivots],
         rank=core[:rank],
         rowSwaps=core[:rowswaps],
@@ -13379,7 +14092,7 @@ LinalgBareiss(value) -> {;
 LinalgDeterminantCertificate(value) -> {;
     sourceRows = LinalgMatrixRows(value,"Determinant certificate matrix");
     sourceRows.Len()==sourceRows[1].Len() ?: _ ?_ .Error("Determinant certificate requires a square matrix");
-    elimination = LinalgBareiss(LinalgMatrixTensor(sourceRows));
+    elimination = LinalgBareiss(LinalgMatrixValue(sourceRows));
     expected = LinalgDeterminantRows(sourceRows);
     determinant = elimination[:determinant];
     verified = elimination.Verify() && determinant==expected;
@@ -13416,7 +14129,7 @@ LinalgNullBasisRows(rows,pivots) -> {;
             pivotColumn = @pivots[row];
             @vector ~= @vector.Set(pivotColumn,-@rows[row][@freeColumn]);
         }; row += 1 };
-        @basis ~= @basis.Push(LinalgVectorTensor(vector));
+        @basis ~= @basis.Push(LinalgVectorStorage(vector));
     }; freeIndex += 1 };
     {= basis=basis, freeColumns=freeColumns };
 };
@@ -13430,9 +14143,9 @@ LinalgVerifySubspace(value) -> {;
     kind==:nullSpace
       ?: value[:basis].All((vector)->LinalgAllZero(LinalgMultiplyMatrixVector(sourceRows,LinalgVectorValues(vector))))
       ?_ (kind==:rowSpace
-          ?: LinalgRank(value[:basis].Len()==0 ?: {:1x1: 0} ?_ LinalgMatrixTensor(value[:basis].Map((vector)->LinalgVectorValues(vector))))==value[:dimension]
+          ?: LinalgRank(value[:basis].Len()==0 ?: {:1x1: 0} ?_ LinalgMatrixValue(value[:basis].Map((vector)->LinalgVectorValues(vector))))==value[:dimension]
           ?_ (kind==:columnSpace
-              ?: LinalgRank(value[:basis].Len()==0 ?: {:1x1: 0} ?_ LinalgMatrixTensor(LinalgTransposeRows(value[:basis].Map((vector)->LinalgVectorValues(vector)))))==value[:dimension]
+              ?: LinalgRank(value[:basis].Len()==0 ?: {:1x1: 0} ?_ LinalgMatrixValue(LinalgTransposeRows(value[:basis].Map((vector)->LinalgVectorValues(vector)))))==value[:dimension]
               ?_ _));
 };
 
@@ -13441,9 +14154,9 @@ LinalgSubspace(value,kind) -> {;
     reduced = LinalgRrefRows(sourceRows);
     pivots = reduced[:pivots];
     basis = kind==:rowSpace
-      ?: reduced[:rows].Filter((row)->!LinalgAllZero(row)).Map((row)->LinalgVectorTensor(row))
+      ?: reduced[:rows].Filter((row)->!LinalgAllZero(row)).Map((row)->LinalgVectorStorage(row))
       ?_ (kind==:columnSpace
-          ?: pivots.Map((column)->LinalgVectorTensor(sourceRows.Map((row)->row[column])))
+          ?: pivots.Map((column)->LinalgVectorStorage(sourceRows.Map((row)->row[column])))
           ?_ LinalgNullBasisRows(reduced[:rows],pivots)[:basis]);
     ambient = kind==:columnSpace ?: sourceRows.Len() ?_ sourceRows[1].Len();
     result = {=
@@ -13451,7 +14164,7 @@ LinalgSubspace(value,kind) -> {;
         schema="rix.linalg.subspace@1",
         exact=1,
         kind=kind,
-        source=LinalgMatrixTensor(sourceRows),
+        source=LinalgMatrixValue(sourceRows),
         ambientDimension=ambient,
         dimension=basis.Len(),
         basis=basis,
@@ -13559,7 +14272,7 @@ LinalgFactorSolve(value,rightHandSide) -> {;
     value[:singular] ?: .Error("Singular factorization cannot solve uniquely") ?_ _;
     lu=value[:kind]==:lu ?: value ?_ value[:lu];
     values=LinalgVectorValues(rightHandSide,"Factorization right-hand side");
-    LinalgVectorTensor(LinalgTriangularSolveRows(
+    LinalgVectorStorage(LinalgTriangularSolveRows(
         LinalgMatrixRows(lu[:lower]),
         LinalgMatrixRows(lu[:upper]),
         LinalgMatrixRows(lu[:permutation]),
@@ -13572,7 +14285,7 @@ LinalgFactorInverse(value) -> {;
     size=LinalgMatrixRows(value[:source]).Len();
     identity=LinalgIdentityRows(size);
     columns=identity.Map((basis)->LinalgVectorValues(LinalgFactorSolve(value,basis)));
-    LinalgMatrixTensor(LinalgTransposeRows(columns));
+    LinalgMatrixValue(LinalgTransposeRows(columns));
 };
 
 LinalgLU(value) -> {;
@@ -13583,10 +14296,10 @@ LinalgLU(value) -> {;
         schema="rix.linalg.factorization@1",
         exact=1,
         kind=:lu,
-        source=LinalgMatrixTensor(sourceRows),
-        permutation=LinalgMatrixTensor(core[:permutation]),
-        lower=LinalgMatrixTensor(core[:lower]),
-        upper=LinalgMatrixTensor(core[:upper]),
+        source=LinalgMatrixValue(sourceRows),
+        permutation=LinalgMatrixValue(core[:permutation]),
+        lower=LinalgMatrixValue(core[:lower]),
+        upper=LinalgMatrixValue(core[:upper]),
         rowSwaps=core[:rowswaps],
         swapSign=core[:swapsign],
         rank=core[:rank],
@@ -13621,8 +14334,8 @@ LinalgLDU(value) -> {;
         source=lu[:source],
         permutation=lu[:permutation],
         lower=lu[:lower],
-        diagonal=LinalgMatrixTensor(diagonal),
-        upper=LinalgMatrixTensor(unitUpper),
+        diagonal=LinalgMatrixValue(diagonal),
+        upper=LinalgMatrixValue(unitUpper),
         lu=lu,
         rowSwaps=lu[:rowswaps],
         swapSign=lu[:swapsign],
@@ -13672,7 +14385,7 @@ LinalgQrDiagnostic(sourceRows,statusValue,details) -> {;
     result={=
         valueKind=:exactQRDiagnostic,schema="rix.linalg.qr@1",kind=:qr,status=statusValue,
         supported=_,exact=1,coefficientDomain=:Rational,algorithm=:modifiedGramSchmidt,
-        mode=:reduced,source=LinalgMatrixTensor(sourceRows),verified=_
+        mode=:reduced,source=LinalgMatrixValue(sourceRows),verified=_
     }.Merge(details);
     result.__type="ExactQRDiagnostic";
     result._proto={= Verify=(self)->_, Record=(self)->self };
@@ -13735,15 +14448,15 @@ LinalgQRTallRows(sourceRows) -> {;
     stopped!=_
       ?: LinalgQrDiagnostic(sourceRows,stopped[:status],stopped.Merge({=
           rowCount=rowCount,columnCount=columnCount,completedColumns=qColumns.Len(),
-          orthonormalColumns=qColumns.Map((column)->LinalgVectorTensor(column)),
-          partialUpper=LinalgMatrixTensor(upperRows)
+          orthonormalColumns=qColumns.Map((column)->LinalgVectorStorage(column)),
+          partialUpper=LinalgMatrixValue(upperRows)
       }))
       ?_ {;
           qRows=LinalgTransposeRows(@qColumns);
           result={=
               valueKind=:exactQRDecomposition,schema="rix.linalg.qr@1",kind=:qr,status=:decomposed,
               supported=1,exact=1,coefficientDomain=:Rational,algorithm=:modifiedGramSchmidt,mode=:reduced,
-              source=LinalgMatrixTensor(@sourceRows),q=LinalgMatrixTensor(qRows),r=LinalgMatrixTensor(@upperRows),
+              source=LinalgMatrixValue(@sourceRows),q=LinalgMatrixValue(qRows),r=LinalgMatrixValue(@upperRows),
               rowCount=@rowCount,columnCount=@columnCount,rank=@columnCount,verified=1
           };
           result.__type="ExactQRDecomposition";
@@ -13783,7 +14496,7 @@ LinalgSolveValues(matrixValue, vectorValue) -> {;
     inconsistent
       ?: LinalgResult({=
           status="inconsistent", solution=_, particular=_, nullspace=[],
-          rank=reduced[:pivots].Len(), rref=LinalgMatrixTensor(reduced[:rows]), pivots=reduced[:pivots]
+          rank=reduced[:pivots].Len(), rref=LinalgMatrixValue(reduced[:rows]), pivots=reduced[:pivots]
       })
       ?_ {;
           particular := LinalgZeros(@columns);
@@ -13803,21 +14516,21 @@ LinalgSolveValues(matrixValue, vectorValue) -> {;
                   pivotColumn = @reduced[:pivots][row];
                   @basis ~= @basis.Set(pivotColumn,-@reduced[:rows][row][@freeColumn]);
               }; row += 1 };
-              @nullspace ~= @nullspace.Push(LinalgVectorTensor(basis));
+              @nullspace ~= @nullspace.Push(LinalgVectorStorage(basis));
           }; freeIndex += 1 };
-          solution = LinalgVectorTensor(particular);
+          solution = LinalgVectorStorage(particular);
           LinalgResult({=
               status=freeColumns.Len()==0 ?: "unique" ?_ "underdetermined",
               solution=solution, particular=solution, nullspace=nullspace,
-              rank=@reduced[:pivots].Len(), rref=LinalgMatrixTensor(@reduced[:rows]), pivots=@reduced[:pivots]
+              rank=@reduced[:pivots].Len(), rref=LinalgMatrixValue(@reduced[:rows]), pivots=@reduced[:pivots]
           });
       };
 };
 
-LinalgRref(value) -> LinalgMatrixTensor(LinalgRrefRows(LinalgMatrixRows(value,"Rref matrix"))[:rows]);
+LinalgRref(value) -> LinalgMatrixValue(LinalgRrefRows(LinalgMatrixRows(value,"Rref matrix"))[:rows]);
 LinalgRank(value) -> LinalgRrefRows(LinalgMatrixRows(value,"Rank matrix"))[:pivots].Len();
 LinalgDeterminant(value) -> LinalgDeterminantRows(LinalgMatrixRows(value,"Determinant matrix"));
-LinalgInverse(value) -> LinalgMatrixTensor(LinalgInverseRows(LinalgMatrixRows(value,"Inverse matrix")));
+LinalgInverse(value) -> LinalgMatrixValue(LinalgInverseRows(LinalgMatrixRows(value,"Inverse matrix")));
 LinalgSolve(first, second ?= _) -> second == _ && (first ? :Map)
   ?: LinalgSolveValues(first[:A],first[:b])
   ?_ LinalgSolveValues(first,second);
@@ -13832,6 +14545,14 @@ LinalgRequireFrame(value) -> LinalgFrameIs(value)
   ?_ (LinalgSpaceIs(value) ?: .Error("Tensor components require a Frame, not a bare VectorSpace") ?_ .Error("Expected a linalg Frame"));
 LinalgRequireTensor(value) -> LinalgTensorIs(value) ?: value ?_ .Error("Expected a coordinate-aware Vector, Covector, or Tensor");
 
+### Numeric IDs are labels; opaque, never-invoked tokens define runtime identity.
+LinalgNewIdentity() -> (unused)->_;
+LinalgSpaceToken(value) -> LinalgSpaceIs(value) ?: value[:identitytoken] ?_ value[:spacetoken];
+LinalgFrameToken(value) -> LinalgFrameIs(value) ?: value[:identitytoken] ?_ value[:frametoken];
+LinalgSameSpace(left,right) -> LinalgSpaceToken(left)!=_ && LinalgSpaceToken(left)==LinalgSpaceToken(right);
+LinalgSameFrame(left,right) -> LinalgFrameToken(left)!=_ && LinalgFrameToken(left)==LinalgFrameToken(right);
+
+
 LinalgVectorSpace(first, second ?= _, options ?= {= }) -> {;
     settings = first ? :Map ?: first ?_ options.Merge({= name=first, dimension=second });
     name = LinalgOption(settings,"name","V");
@@ -13840,15 +14561,17 @@ LinalgVectorSpace(first, second ?= _, options ?= {= }) -> {;
     (over==:Rational || over==:rational || over=="Rational" || over=="rational")
       ?: _ ?_ .Error("Phase 1 VectorSpace currently requires over=:Rational");
     lineageLimit = LinalgPositiveInteger(LinalgOption(settings,"lineagelimit",30),"Tensor lineage limit");
+    lineageLimit<=1024 ?_> .Error("Tensor lineage limit must be at most 1024");
     value = {=
         valueKind=:vectorSpace, schema="rix.linalg.vector-space@1",
-        identity={= valueKind=:vectorSpaceIdentity }, spaceIdentity=LinalgNextIdentity(:space), name=name, dimension=dimension,
+        identity={= valueKind=:vectorSpaceIdentity }, identityToken=LinalgNewIdentity(), spaceIdentity=LinalgNextIdentity(:space), name=name, dimension=dimension,
         over=:Rational, metadata=LinalgOption(settings,"metadata",_), definingFrame=_, lineageLimit=lineageLimit
     };
     value.__type="VectorSpace";
     value._mutable=1;
     value._proto={=
         Dual=(self)->LinalgDualSpace(self),
+        ScalarField=(self)->LinalgRationalField(),
         TensorProduct=(self,other)->LinalgTensorProduct(self,other),
         Serialize=(self)->LinalgSerialize(self)
     };
@@ -13861,6 +14584,7 @@ LinalgVectorSpace(first, second ?= _, options ?= {= }) -> {;
 
 LinalgFrame(spaceValue, specification ?= _, basisArgument ?= _, options ?= {= }) -> {;
     space = LinalgRequireSpace(spaceValue);
+    space[:dimension]!=:countable ?_> .Error("Countable polynomial spaces provide their own monomial Frame; general infinite basis changes are unsupported");
     settings = specification ? :Map
       ?: specification.Merge({= space=space })
       ?_ options.Merge({= space=space, name=specification, basis=basisArgument });
@@ -13870,22 +14594,22 @@ LinalgFrame(spaceValue, specification ?= _, basisArgument ?= _, options ?= {= })
     name = LinalgOption(settings,"name",space[:definingframe]==_ ?: "defining" ?_ "frame");
     requestedRelative = LinalgOption(settings,"relativeto",_);
     relativeTo = defining ?: _ ?_ LinalgRequireFrame(requestedRelative==_ ?: space[:definingframe] ?_ requestedRelative);
-    defining || relativeTo[:spaceidentity] == space[:spaceidentity] ?: _ ?_ .Error("relativeTo Frame must belong to the same VectorSpace");
+    defining || LinalgSameSpace(relativeTo,space) ?: _ ?_ .Error("relativeTo Frame must belong to the same VectorSpace");
     localBasis = defining ?: LinalgIdentityRows(space[:dimension]) ?_ LinalgMatrixRows(basisValue,"Frame basis");
     localBasis.Len()==space[:dimension] && localBasis[1].Len()==space[:dimension]
-      ?: _ ?_ .Error(@"Frame basis must be @{space[:dimension]}x@{space[:dimension]}");
+      ?_> .Error(@"Frame basis must be @{space[:dimension]}x@{space[:dimension]}");
     defining ?: _ ?_ LinalgInverseRows(localBasis);
     absoluteBasis = defining ?: localBasis ?_ LinalgMultiplyRows(LinalgMatrixRows(relativeTo[:basis]),localBasis);
     inverse = LinalgInverseRows(absoluteBasis);
     value = {=
         valueKind=:frame, schema="rix.linalg.frame@1", name=name, space=space,
-        spaceIdentity=space[:spaceidentity], frameIdentity=LinalgNextIdentity(:frame),
-        relativeTo=relativeTo, localBasis=LinalgMatrixTensor(localBasis),
-        basis=LinalgMatrixTensor(absoluteBasis), inverseBasis=LinalgMatrixTensor(inverse),
+        spaceIdentity=space[:spaceidentity], spaceToken=space[:identitytoken], identityToken=LinalgNewIdentity(), frameIdentity=LinalgNextIdentity(:frame),
+        relativeTo=relativeTo, localBasis=LinalgMatrixValue(localBasis),
+        basis=LinalgMatrixValue(absoluteBasis), inverseBasis=LinalgMatrixValue(inverse),
         defining=defining ?: 1 ?_ _, metadata=LinalgOption(settings,"metadata",_)
     };
-    value.__type="Frame";
-    value._proto={= Serialize=(self)->LinalgSerialize(self) };
+    value.__type="Frame"; value._mutable=1;
+    value._proto={= Serialize=(self)->LinalgSerialize(self),Dual=(self,name ?= _,basis ?= _)->LinalgDualFrame(self,name,basis),ChangeMatrix=(self,target)->LinalgChangeMatrix(self,target) };
     value.name=value[:name]; value.space=space; value.spaceIdentity=value[:spaceidentity];
     value.frameIdentity=value[:frameidentity]; value.relativeTo=relativeTo;
     value.localBasis=value[:localbasis]; value.basis=value[:basis]; value.inverseBasis=value[:inversebasis];
@@ -13896,10 +14620,16 @@ LinalgFrame(spaceValue, specification ?= _, basisArgument ?= _, options ?= {= })
 
 LinalgChangeRows(sourceValue,targetValue) -> {;
     source=LinalgRequireFrame(sourceValue); target=LinalgRequireFrame(targetValue);
-    source[:spaceidentity]==target[:spaceidentity] ?: _ ?_ .Error("Frames must belong to the same VectorSpace");
+    LinalgSameSpace(source,target) ?: _ ?_ .Error("Frames must belong to the same VectorSpace");
+    source[:space][:dimension]!=:countable ?_> .Error("Countable Frames have no finite change matrix");
     LinalgMultiplyRows(LinalgMatrixRows(target[:inversebasis]),LinalgMatrixRows(source[:basis]));
 };
-LinalgChangeMatrix(source,target) -> LinalgMatrixTensor(LinalgChangeRows(source,target));
+LinalgChangeMatrix(source,target) -> {;
+    a=LinalgRequireFrame(source); b=LinalgRequireFrame(target);
+    (a[:dualframe]!=_)==(b[:dualframe]!=_) ?_> .Error("ChangeMatrix requires two primal Frames or two dual Frames");
+    change=LinalgChangeRows(a,b);
+    LinalgMatrixValue(a[:dualframe]!=_ ?: LinalgInverseRows(LinalgTransposeRows(change)) ?_ change);
+};
 
 LinalgVariance(value) -> (value==:down || value==:covariant || value=="down" || value=="covariant")
   ?: 1
@@ -13908,7 +14638,7 @@ LinalgVariance(value) -> (value==:down || value==:covariant || value=="down" || 
 
 LinalgSlot(frameValue,dualValue) -> {;
     frame=LinalgRequireFrame(frameValue);
-    slot={= frame=frame, spaceIdentity=frame[:spaceidentity], frameIdentity=frame[:frameidentity], dual=dualValue ?: 1 ?_ _ };
+    slot={= frame=frame, spaceIdentity=frame[:spaceidentity], spaceToken=frame[:spacetoken], frameIdentity=frame[:frameidentity], frameToken=frame[:identitytoken], dual=dualValue ?: 1 ?_ _ };
     slot.frame=frame; slot.spaceIdentity=slot[:spaceidentity]; slot.frameIdentity=slot[:frameidentity]; slot.dual=slot[:dual];
     slot;
 };
@@ -13920,7 +14650,7 @@ LinalgNormalizeSlots(components,framesValue,varianceValue ?= _) -> {;
       ?_ framesValue;
     frames ? :Array ?: _ ?_ .Error("Tensor frames must be a Frame or Array of Frames");
     frames.Len()==rank ?: _ ?_ .Error(@"Tensor components rank @{rank} does not match @{frames.Len()} slots");
-    duals = varianceValue==_ ?: LinalgZeros(rank) ?_ varianceValue.Map((entry)->LinalgVariance(entry));
+    duals = varianceValue==_ ?: LinalgZeros(rank).Map((unused)->_) ?_ varianceValue.Map((entry)->LinalgVariance(entry));
     duals.Len()==rank ?: _ ?_ .Error(@"Tensor variance must contain @{rank} entries");
     slots := [];
     shape=components.Shape();
@@ -13928,7 +14658,7 @@ LinalgNormalizeSlots(components,framesValue,varianceValue ?= _) -> {;
         frame=LinalgRequireFrame(@frames[axis]);
         @shape[axis]==frame.space[:dimension]
           ?: _ ?_ .Error(@"Tensor axis @{axis} has size @{shape[axis]} but Frame @{frame[:name]} has dimension @{frame.space[:dimension]}");
-        @slots ~= @slots.Push(LinalgSlot(frame,@duals[axis]));
+        @slots ~= @slots.Push(LinalgSlot(frame,LinalgActualVariance(frame,@duals[axis])));
     }; axis+=1 };
     slots;
 };
@@ -13953,6 +14683,12 @@ LinalgRecordRepresentation(identity,value) -> {;
           evicted=@reps[2];
           @reps ~= @reps.RemoveAt(2);
           evicted[:equivalentto]=_; evicted.equivalentTo=_;
+          {@ retained=1; retained<=@reps.Len(); {;
+              representation=@reps[retained]; link=representation[:equivalentto];
+              (link!=_ && link[:representationtoken]==@evicted[:representationtoken]) ?: {;
+                  @representation[:equivalentto]=_; @representation.equivalentTo=_;
+              } ?_ _;
+          }; retained+=1 };
       }
       ?_ _;
     identity[:representations]=reps;
@@ -13960,16 +14696,22 @@ LinalgRecordRepresentation(identity,value) -> {;
 };
 
 LinalgTensorValue(components,slots,lineage ?= {= }) -> {;
+    components.Shape().Len()==slots.Len() ?_> .Error("Tensor rank must match its ordered slots");
+    slots.All((slot,axis)->components.Shape()[axis]==slot[:frame][:space][:dimension]) ?_> .Error("Tensor component shape must match every slot Frame dimension");
+    entries=LinalgSparseIs(components) ?: components.Entries().Map((term)->term[:value]) ?_ LinalgVectorValues(components.Flatten());
+    entries.All((entry)->(entry ? :Integer)||(entry ? :Rational)) ?_> .Error("Tensor components must be exact Rational scalars");
+    components=LinalgSparseIs(components) ?: components ?_ components ~!: :Shaped;
     typeName=LinalgTensorType(slots);
     identityKey=lineage.Has("identitykey") ?: lineage[:identitykey] ?_ LinalgNextIdentity(:tensor);
     identity=lineage.Has("identity")
       ?: lineage.identity
-      ?_ {= valueKind=:tensorIdentity, origin=_, representations=[],
+      ?_ {= valueKind=:tensorIdentity, token=LinalgNewIdentity(), origin=_, representations=[],
             lineageLimit=slots.Map((slot)->slot[:frame][:space][:lineagelimit]).Sort()[1] };
+    identity._mutable=1;
     value={=
         valueKind=:coordinateTensor, schema="rix.linalg.tensor@1", components=components, slots=slots,
-        identity=identity, identityKey=identityKey,
-        representationIdentity={= valueKind=:tensorRepresentationIdentity },
+        identity=identity, identityKey=identityKey, identityToken=identity[:token],
+        representationIdentity={= valueKind=:tensorRepresentationIdentity }, representationToken=LinalgNewIdentity(),
         representationKey=LinalgNextIdentity(:representation),
         equivalentTo=LinalgOption(lineage,"equivalentto",_), origin=LinalgOption(lineage,"origin",identity[:origin]),
         transform=LinalgOption(lineage,"transform",_), viewOf=LinalgOption(lineage,"viewof",_),
@@ -13983,31 +14725,48 @@ LinalgTensorValue(components,slots,lineage ?= {= }) -> {;
         Transform=(self,target)->LinalgTransform(self,target),
         Pair=(self,other)->LinalgPair(self,other),
         SameTensor=(self,other)->LinalgSameTensor(self,other),
+        SameSource=(self,other)->LinalgSameSource(self,other),
+        CoordinateStorage=(self)->LinalgCoordinateStorage(self),
         TensorProduct=(self,other)->LinalgTensorProduct(self,other),
         Contract=(self,first,second)->LinalgContract(self,first,second),
+        Equal=(self,other)->LinalgTensorEqual(self,other),
+        Permute=(self,order)->LinalgPermute(self,order), View=(self)->LinalgView(self),
+        ComponentSlice=(self,selectors)->LinalgComponentSlice(self,selectors),
+        Lower=(self,metric ?= _,axis ?= 1)->LinalgMetricIndex(self,metric,axis,:lower),
+        Raise=(self,metric ?= _,axis ?= 1)->LinalgMetricIndex(self,metric,axis,:raise),
+        Dot=(self,other,metric ?= _)->LinalgMetricDot(self,other,metric),
+        NormSquared=(self,metric ?= _)->LinalgNormSquared(self,metric),
+        Norm=(self,metric ?= _)->LinalgNorm(self,metric),
+        Angle=(self,other,metric ?= _)->LinalgAngle(self,other,metric),
+        Trace=(self,first ?= 1,second ?= 2,metric ?= _)->LinalgTrace(self,first,second,metric),
+        Symmetrize=(self,axes ?= _)->LinalgSymmetry(self,axes),
+        Antisymmetrize=(self,axes ?= _)->LinalgSymmetry(self,axes,1),
+        TensorPower=(self,exponent)->LinalgTensorPower(self,exponent),
         Serialize=(self)->LinalgSerialize(self)
     };
     value._proto["Transform!"]=(self,target)->LinalgTransformBang(self,target);
+    value._proto["TRANSFORM!"]=(self,target)->LinalgTransformBang(self,target);
     identity[:origin]==_ ?: {; @identity[:origin]=@value; @value[:origin]=@value; } ?_ _;
     LinalgSyncTensor(value);
     value.components=components; value.slots=slots; value.identity=identity; value.identityKey=identityKey;
-    LinalgRecordRepresentation(identity,value);
+    LinalgOption(lineage,"deferhistory",_) ?_> LinalgRecordRepresentation(identity,value);
+    value;
 };
 
 LinalgTensor(components,frames,variance ?= _,options ?= {= }) -> {;
-    components ? :Shaped ?: _ ?_ .Error("Vector/Tensor components must be Shaped");
+    ((components ? :Shaped)||LinalgSparseIs(components)) ?_> .Error("Vector/Tensor components must be Shaped or finite-support coordinates");
     slots=LinalgNormalizeSlots(components,frames,variance);
     LinalgTensorValue(components,slots);
 };
-LinalgVector(components,frame,options ?= {= })->LinalgTensor(LinalgVectorTensor(LinalgVectorValues(components,"Vector components")),frame,[:up],options);
-LinalgCovector(components,frame,options ?= {= })->LinalgTensor(LinalgVectorTensor(LinalgVectorValues(components,"Covector components")),frame,[:down],options);
+LinalgVector(components,frame,options ?= {= })->LinalgTensor(LinalgSparseIs(components) ?: components ?_ LinalgVectorStorage(LinalgVectorValues(components,"Vector components")),frame,[:up],options);
+LinalgCovector(components,frame,options ?= {= })->LinalgTensor(LinalgSparseIs(components) ?: components ?_ LinalgVectorStorage(LinalgVectorValues(components,"Covector components")),frame,[:down],options);
 
 LinalgTypedShaped(requested,components,slotRecords) -> {;
-    slots=slotRecords.Map((slot)->LinalgSlot(slot[:frame],requested==:Covector ?: 1 ?_ slot[:dual]));
-    (requested==:Vector || requested==:Covector) && slots.Len()!=1
-      ?: .Error(@"@{@requested} requires exactly one Frame annotation") ?_ _;
+    slots=slotRecords.Map((slot)->LinalgSlot(slot[:frame],LinalgActualVariance(slot[:frame],requested==:Covector ?: 1 ?_ slot[:dual])));
+    ((requested==:Vector || requested==:Covector) && slots.Len()!=1)
+      ?: .Error(@"@{requested} requires exactly one Frame annotation") ?_ _;
     slots.Len()==components.Shape().Len()
-      ?: _ ?_ .Error(@"@{@requested} header declares @{@slots.Len()} slots for rank-@{@components.Shape().Len()} components");
+      ?: _ ?_ .Error(@"@{requested} header declares @{slots.Len()} slots for rank-@{components.Shape().Len()} components");
     LinalgTensorValue(components,slots);
 };
 
@@ -14033,6 +14792,7 @@ LinalgTupleForLinear(linear,shape,strides) -> {;
 };
 
 LinalgTransformAxis(tensor,axis,matrix) -> {;
+    !LinalgSparseIs(tensor) ?_> LinalgSparseAxis(tensor,axis,matrix);
     shape=tensor.Shape(); strides=LinalgStrides(shape); input=tensor.Flatten();
     output := [];
     {@ linear=0; linear<@input.Size(); {;
@@ -14058,15 +14818,16 @@ LinalgTargetFrames(value,targetValue) -> {;
 };
 
 LinalgTransformed(value,targets) -> {;
+    !LinalgSparseIs(value[:components]) ?_> LinalgSparseTransformed(value,targets);
     components := value[:components]; changes := [];
     {@ axis=1; axis<=@value[:slots].Len(); {;
         slot=@value[:slots][axis]; target=LinalgRequireFrame(@targets[axis]);
-        slot[:spaceidentity]==target[:spaceidentity]
+        LinalgSameSpace(slot,target)
           ?: _ ?_ .Error(@"Target Frame @{target[:name]} does not belong to tensor slot @{axis}'s VectorSpace");
         change=LinalgChangeRows(slot[:frame],target);
         applied=slot[:dual] ?: LinalgInverseRows(LinalgTransposeRows(change)) ?_ change;
         @components ~= LinalgTransformAxis(@components,axis,applied);
-        @changes ~= @changes.Push(LinalgMatrixTensor(applied));
+        @changes ~= @changes.Push(LinalgMatrixValue(applied));
     }; axis+=1 };
     {= components=components, changes=changes };
 };
@@ -14076,7 +14837,7 @@ LinalgTransform(value,targetValue) -> {;
     transformed=LinalgTransformed(exact,targets);
     slots=exact[:slots].Map((slot,axis)->LinalgSlot(targets[axis],slot[:dual]));
     lineage={=
-        identity=exact[:identity], identityKey=exact[:identitykey], equivalentTo=exact, origin=exact[:identity][:origin], viewOf=exact[:viewof],
+        identity=exact.identity, identityKey=exact[:identitykey], equivalentTo=exact, origin=exact.identity[:origin], viewOf=exact[:viewof],
         transform={= kind=:coordinateChange, sources=exact[:slots].Map((slot)->slot[:frame]), targets=targets, matrices=transformed[:changes] }
     };
     lineage.identity=exact.identity;
@@ -14086,7 +14847,7 @@ LinalgTransform(value,targetValue) -> {;
 LinalgSnapshot(value) -> {;
     snapshot={=
         valueKind=value[:valuekind], schema=value[:schema], components=value[:components], slots=value[:slots],
-        identity=value[:identity], identityKey=value[:identitykey], representationIdentity=value[:representationidentity],
+        identity=value[:identity], identityKey=value[:identitykey], identityToken=value[:identitytoken], representationIdentity=value[:representationidentity], representationToken=value[:representationtoken],
         representationKey=value[:representationkey],
         equivalentTo=value[:equivalentto], origin=value[:origin], transform=value[:transform],
         viewOf=value[:viewof], derivedFrom=value[:derivedfrom]
@@ -14094,21 +14855,19 @@ LinalgSnapshot(value) -> {;
     snapshot.__type=value.__type; snapshot._mutable=1; snapshot._proto=value._proto;
     LinalgSyncTensor(snapshot);
     snapshot.identity=value.identity; snapshot.identityKey=value[:identitykey]; snapshot.slots=value.slots; snapshot.components=value.components;
+    snapshot;
 };
 
 LinalgTransformBang(value,targetValue) -> {;
     exact=LinalgRequireTensor(value); identity=exact.identity; sourceSlots=exact[:slots];
     targets=LinalgTargetFrames(exact,targetValue); previous=LinalgSnapshot(exact);
-    identity[:representations].Len()==1
-      ?: {;
-          @identity[:origin]=@previous;
-          reps=@identity[:representations];
-          @identity[:representations]=reps.Set(1,@previous);
-      }
-      ?_ _;
     transformed=LinalgTransformed(exact,targets);
+    identity[:origin][:representationtoken]==exact[:representationtoken]
+      ?: {; @identity[:origin]=@previous; } ?_ _;
+    previous[:origin]=identity[:origin]; previous.origin=identity[:origin];
+    identity[:representations]=identity[:representations].Map((representation)->representation[:representationtoken]==exact[:representationtoken] ?: previous ?_ representation);
     exact[:components]=transformed[:components];
-    exact[:representationidentity]={= valueKind=:tensorRepresentationIdentity };
+    exact[:representationidentity]={= valueKind=:tensorRepresentationIdentity }; exact[:representationtoken]=LinalgNewIdentity();
     exact[:representationkey]=LinalgNextIdentity(:representation);
     exact[:slots]=exact[:slots].Map((slot,axis)->LinalgSlot(targets[axis],slot[:dual]));
     exact[:equivalentto]=previous; exact[:origin]=identity[:origin];
@@ -14119,28 +14878,31 @@ LinalgTransformBang(value,targetValue) -> {;
 };
 
 LinalgComponents(value)->LinalgRequireTensor(value)[:components];
-LinalgSameTensor(left,right)->LinalgRequireTensor(left)[:identitykey]==LinalgRequireTensor(right)[:identitykey] ?: 1 ?_ _;
+LinalgSameTensor(left,right)->LinalgRequireTensor(left)[:identitytoken]==LinalgRequireTensor(right)[:identitytoken] ?: 1 ?_ _;
 
 LinalgPair(firstValue,secondValue) -> {;
     first=LinalgRequireTensor(firstValue); second=LinalgRequireTensor(secondValue);
-    covector=first.__type=="Covector" ?: first ?_ second.__type=="Covector" ?: second ?_ _;
-    vector=first.__type=="Vector" ?: first ?_ second.__type=="Vector" ?: second ?_ _;
+    covector=LinalgTensorType(first[:slots])=="Covector" ?: first ?_ LinalgTensorType(second[:slots])=="Covector" ?: second ?_ _;
+    vector=LinalgTensorType(first[:slots])=="Vector" ?: first ?_ LinalgTensorType(second[:slots])=="Vector" ?: second ?_ _;
     covector!=_ && vector!=_ && first[:slots].Len()==1 && second[:slots].Len()==1
-      ?: _ ?_ .Error("Pair requires one Vector and one Covector");
-    covector[:slots][1][:spaceidentity]==vector[:slots][1][:spaceidentity]
+      ?_> .Error("Pair requires one Vector and one Covector");
+    LinalgSameSpace(covector[:slots][1],vector[:slots][1])
       ?: _ ?_ .Error("Vector and Covector must belong to the same VectorSpace");
-    aligned=vector[:slots][1][:frameidentity]==covector[:slots][1][:frameidentity] ?: vector ?_ LinalgTransform(vector,covector[:slots][1][:frame]);
+    aligned=LinalgSameFrame(vector[:slots][1],covector[:slots][1]) ?: vector ?_ LinalgTransform(vector,covector[:slots][1][:frame]);
+    !(LinalgSparseIs(covector[:components])||LinalgSparseIs(aligned[:components])) ?_> LinalgSparsePair(covector[:components],aligned[:components]);
     LinalgDot(LinalgVectorValues(covector[:components]),LinalgVectorValues(aligned[:components]));
 };
 
 LinalgCompatible(left,right) -> left[:slots].Len()==right[:slots].Len() &&
-  left[:slots].All((slot,axis)->slot[:spaceidentity]==right[:slots][axis][:spaceidentity] && slot[:dual]==right[:slots][axis][:dual]);
+  left[:slots].All((slot,axis)->LinalgSameSpace(slot,right[:slots][axis]) && slot[:dual]==right[:slots][axis][:dual]);
 
 LinalgCombine(operation,leftValue,rightValue) -> {;
     left=LinalgRequireTensor(leftValue); right=LinalgRequireTensor(rightValue);
     LinalgCompatible(left,right) ?: _ ?_ .Error(@"@{operation} requires tensors with the same ordered VectorSpace slots and variance");
-    aligned=left[:slots].All((slot,axis)->slot[:frameidentity]==right[:slots][axis][:frameidentity])
+    aligned=left[:slots].All((slot,axis)->LinalgSameFrame(slot,right[:slots][axis]))
       ?: right ?_ LinalgTransform(right,left[:slots].Map((slot)->slot[:frame]));
+    !(LinalgSparseIs(left[:components])||LinalgSparseIs(aligned[:components])) ?_> LinalgTensorValue(
+        LinalgSparseAdd(left[:components],LinalgSparseScale(aligned[:components],operation==:add ?: 1 ?_ -1)),left[:slots],{= derivedFrom=[left,right] });
     a=left[:components].Flatten(); b=aligned[:components].Flatten();
     values=[];
     values=a.Map((entry,index)->operation==:add ?: entry+b[index] ?_ entry-b[index]);
@@ -14149,6 +14911,7 @@ LinalgCombine(operation,leftValue,rightValue) -> {;
 
 LinalgScale(operation,value,scalarValue,scalarFirst ?= _) -> {;
     tensor=LinalgRequireTensor(value); scalar=LinalgExact(scalarValue,"Tensor scalar");
+    !LinalgSparseIs(tensor[:components]) ?_> LinalgTensorValue(LinalgSparseScale(tensor[:components],operation==:mul ?: scalar ?_ 1/scalar),tensor[:slots],{= derivedFrom=[tensor] });
     values=tensor[:components].Map((entry)->operation==:mul ?: entry*scalar ?_ scalarFirst ?: scalar/entry ?_ entry/scalar);
     LinalgTensorValue(values,tensor[:slots],{= derivedFrom=[tensor] });
 };
@@ -14162,20 +14925,19 @@ LinalgDefaultFrame(spaceValue) -> {;
 
 LinalgDualSpace(spaceValue) -> {;
     space=LinalgRequireSpace(spaceValue);
-    existing=space[:dualspace];
-    existing!=_
-      ?: existing
-      ?_ {;
-          dual=LinalgVectorSpace({=
-              name=@"@{@space[:name]}*",dimension=@space[:dimension],over=:Rational,
-              lineageLimit=@space[:lineagelimit],metadata={= construction=:algebraicDual,primalSpaceIdentity=@space[:spaceidentity] }
-          });
-          dual[:dualof]=@space[:spaceidentity]; dual.dualOf=@space;
-          dual[:primalspace]=@space; dual.primalSpace=@space;
-          @space[:dualspace]=dual; @space.dualSpace=dual;
-          LinalgDefaultFrame(dual);
-          dual;
-      };
+    space[:dimension]!=:countable ?_> .Error("The full dual of a countable algebraic space is not finite-support; use explicit finite-support Covectors for pairing");
+    cached=@linalgState[:dualspaces].Filter((entry)->entry[:token]==space[:identitytoken]);
+    cached.Len()==0 ?_> cached[1][:value];
+    dual=LinalgVectorSpace({=
+        name=@"@{space[:name]}*",dimension=space[:dimension],over=:Rational,
+        lineageLimit=space[:lineagelimit],metadata={= construction=:algebraicDual,primalSpaceIdentity=space[:spaceidentity] }
+    });
+    dual[:dualof]=space[:spaceidentity]; dual.dualOf=space;
+    dual[:primalspace]=space; dual.primalSpace=space;
+    LinalgDefaultFrame(dual);
+    @linalgState[:dualspaces]=@linalgState[:dualspaces].Push({= spaceId=space[:spaceidentity],token=space[:identitytoken],value=dual });
+    space[:dualspace]=dual; space.dualSpace=dual;
+    dual;
 };
 
 LinalgLinearMapIs(value) -> (value ? :Map) && value[:schema]=="rix.linalg.linear-map@1";
@@ -14185,15 +14947,16 @@ LinalgLinearMap(domainValue,codomainValue,matrixValue,options ?= {= }) -> {;
     domain=LinalgRequireSpace(domainValue); codomain=LinalgRequireSpace(codomainValue);
     rows=LinalgMatrixRows(matrixValue,"LinearMap matrix");
     rows.Len()==codomain[:dimension] && rows[1].Len()==domain[:dimension]
-      ?: _ ?_ .Error("LinearMap matrix shape must be codomain dimension by domain dimension");
+      ?_> .Error("LinearMap matrix shape must be codomain dimension by domain dimension");
     sourceFrame=LinalgRequireFrame(LinalgOption(options,"sourceframe",LinalgDefaultFrame(domain)));
     targetFrame=LinalgRequireFrame(LinalgOption(options,"targetframe",LinalgDefaultFrame(codomain)));
-    sourceFrame[:spaceidentity]==domain[:spaceidentity] ?: _ ?_ .Error("LinearMap sourceFrame must belong to its domain");
-    targetFrame[:spaceidentity]==codomain[:spaceidentity] ?: _ ?_ .Error("LinearMap targetFrame must belong to its codomain");
+    LinalgSameSpace(sourceFrame,domain) ?: _ ?_ .Error(@"LinearMap sourceFrame must belong to its domain (Frame space @{sourceFrame[:spaceidentity]}, domain @{domain[:spaceidentity]})");
+    LinalgSameSpace(targetFrame,codomain) ?: _ ?_ .Error("LinearMap targetFrame must belong to its codomain");
+    sourceFrame[:dualframe]==_ && targetFrame[:dualframe]==_ ?_> .Error("LinearMap coordinate Frames must be primal Frames of the declared domain and codomain; use DualSpace for a dual map");
     value={=
-        valueKind=:linearMap,schema="rix.linalg.linear-map@1",
+        valueKind=:linearMap,schema="rix.linalg.linear-map@1",identityToken=LinalgNewIdentity(),
         name=LinalgOption(options,"name","linearMap"),domain=domain,codomain=codomain,
-        matrix=LinalgMatrixTensor(rows),sourceFrame=sourceFrame,targetFrame=targetFrame,
+        matrix=LinalgMatrixValue(rows),sourceFrame=sourceFrame,targetFrame=targetFrame,
         exact=1,provenance=LinalgOption(options,"provenance",{= plugin=:linalg,version=2,construction=:coordinateMatrix })
     };
     value.__type="LinearMap";
@@ -14213,17 +14976,19 @@ LinalgLinearMap(domainValue,codomainValue,matrixValue,options ?= {= }) -> {;
 LinalgLinearMapVerify(value) -> {;
     map=LinalgRequireLinearMap(value); rows=LinalgMatrixRows(map[:matrix]);
     rows.Len()==map[:codomain][:dimension] && rows[1].Len()==map[:domain][:dimension]
-      && map[:sourceframe][:spaceidentity]==map[:domain][:spaceidentity]
-      && map[:targetframe][:spaceidentity]==map[:codomain][:spaceidentity];
+      && LinalgSameSpace(map[:sourceframe],map[:domain])
+      && LinalgSameSpace(map[:targetframe],map[:codomain]);
 };
 
 LinalgPushforward(mapValue,vectorValue) -> {;
     map=LinalgRequireLinearMap(mapValue); vector=LinalgRequireTensor(vectorValue);
-    vector.__type=="Vector" && vector[:slots][1][:spaceidentity]==map[:domain][:spaceidentity]
-      ?: _ ?_ .Error("Pushforward requires a Vector in the map domain");
-    aligned=vector[:slots][1][:frameidentity]==map[:sourceframe][:frameidentity]
+    LinalgTensorType(vector[:slots])=="Vector" && LinalgSameSpace(vector[:slots][1],map[:domain])
+      ?_> .Error("Pushforward requires a Vector in the map domain");
+    aligned=LinalgSameFrame(vector[:slots][1],map[:sourceframe])
       ?: vector ?_ LinalgTransform(vector,map[:sourceframe]);
-    values=LinalgMultiplyMatrixVector(LinalgMatrixRows(map[:matrix]),LinalgVectorValues(aligned[:components]));
+    values=LinalgSparseIs(aligned[:components])
+      ?: LinalgSparseAxis(aligned[:components],1,LinalgMatrixRows(map[:matrix]))
+      ?_ LinalgMultiplyMatrixVector(LinalgMatrixRows(map[:matrix]),LinalgVectorValues(aligned[:components]));
     result=LinalgVector(values,map[:targetframe]);
     result[:viewof]=vector; result.viewOf=vector;
     result;
@@ -14231,24 +14996,26 @@ LinalgPushforward(mapValue,vectorValue) -> {;
 
 LinalgPullback(mapValue,covectorValue) -> {;
     map=LinalgRequireLinearMap(mapValue); covector=LinalgRequireTensor(covectorValue);
-    covector.__type=="Covector" && covector[:slots][1][:spaceidentity]==map[:codomain][:spaceidentity]
-      ?: _ ?_ .Error("Pullback requires a Covector in the map codomain");
-    aligned=covector[:slots][1][:frameidentity]==map[:targetframe][:frameidentity]
+    LinalgTensorType(covector[:slots])=="Covector" && LinalgSameSpace(covector[:slots][1],map[:codomain])
+      ?_> .Error("Pullback requires a Covector in the map codomain");
+    aligned=LinalgSameFrame(covector[:slots][1],map[:targetframe])
       ?: covector ?_ LinalgTransform(covector,map[:targetframe]);
     transpose=LinalgTransposeRows(LinalgMatrixRows(map[:matrix]));
-    LinalgCovector(LinalgMultiplyMatrixVector(transpose,LinalgVectorValues(aligned[:components])),map[:sourceframe]);
+    values=LinalgSparseIs(aligned[:components]) ?: LinalgSparseAxis(aligned[:components],1,transpose)
+      ?_ LinalgMultiplyMatrixVector(transpose,LinalgVectorValues(aligned[:components]));
+    LinalgCovector(values,map[:sourceframe]);
 };
 
 LinalgCompose(leftValue,rightValue) -> {;
     left=LinalgRequireLinearMap(leftValue); right=LinalgRequireLinearMap(rightValue);
-    right[:codomain][:spaceidentity]==left[:domain][:spaceidentity]
+    LinalgSameSpace(right[:codomain],left[:domain])
       ?: _ ?_ .Error("LinearMap composition requires the right codomain to equal the left domain");
     bridge=LinalgChangeRows(right[:targetframe],left[:sourceframe]);
     matrix=LinalgMultiplyRows(
         LinalgMatrixRows(left[:matrix]),
         LinalgMultiplyRows(bridge,LinalgMatrixRows(right[:matrix]))
     );
-    LinalgLinearMap(right[:domain],left[:codomain],LinalgMatrixTensor(matrix),{=
+    LinalgLinearMap(right[:domain],left[:codomain],LinalgMatrixValue(matrix),{=
         name="composition",sourceFrame=right[:sourceframe],targetFrame=left[:targetframe],
         provenance={= plugin=:linalg,version=2,construction=:composition,factors=[left[:name],right[:name]] }
     });
@@ -14264,11 +15031,22 @@ LinalgLinearMapInverse(value) -> {;
     });
 };
 
+LinalgMapDualFrame(frameValue) -> {;
+    frame=LinalgRequireFrame(frameValue);
+    cached=@linalgState[:mapdualframes].Filter((entry)->entry[:token]==frame[:identitytoken]);
+    cached.Len()==0 ?_> cached[1][:value];
+    space=LinalgDualSpace(frame[:space]); defining=LinalgDefaultFrame(space);
+    dualBasis=LinalgInverseRows(LinalgTransposeRows(LinalgMatrixRows(frame[:basis])));
+    result=frame[:defining] ?: defining ?_ LinalgFrame(space,{= name=@"@{frame[:name]}*",relativeTo=defining,basis=LinalgMatrixValue(dualBasis) });
+    frame[:mapdualframe]=result;
+    @linalgState[:mapdualframes]=@linalgState[:mapdualframes].Push({= frameId=frame[:frameidentity],token=frame[:identitytoken],value=result });
+    result;
+};
 LinalgDualMap(value) -> {;
     map=LinalgRequireLinearMap(value);
     domain=LinalgDualSpace(map[:codomain]); codomain=LinalgDualSpace(map[:domain]);
-    LinalgLinearMap(domain,codomain,LinalgMatrixTensor(LinalgTransposeRows(LinalgMatrixRows(map[:matrix]))),{=
-        name=@"@{map[:name]} dual",sourceFrame=LinalgDefaultFrame(domain),targetFrame=LinalgDefaultFrame(codomain),
+    LinalgLinearMap(domain,codomain,LinalgMatrixValue(LinalgTransposeRows(LinalgMatrixRows(map[:matrix]))),{=
+        name=@"@{map[:name]} dual",sourceFrame=LinalgMapDualFrame(map[:targetframe]),targetFrame=LinalgMapDualFrame(map[:sourceframe]),
         provenance={= plugin=:linalg,version=2,construction=:dual,source=map[:name] }
     });
 };
@@ -14286,6 +15064,8 @@ LinalgTensorProductSpace(leftValue,rightValue) -> {;
 
 LinalgTensorProductValues(leftValue,rightValue) -> {;
     left=LinalgRequireTensor(leftValue); right=LinalgRequireTensor(rightValue);
+    !(LinalgSparseIs(left[:components])||LinalgSparseIs(right[:components])) ?_> LinalgTensorValue(
+        LinalgSparseProduct(left[:components],right[:components]),left[:slots].Concat(right[:slots]),{= derivedFrom=[left,right],transform={= kind=:tensorProduct } });
     values:=[]; a=left[:components].Flatten(); b=right[:components].Flatten();
     {@ first=1; first<=@a.Size(); {;
         {@ second=1; second<=@b.Size(); {; @values ~= @values.Push(@a[@first]*@b[second]); }; second+=1 };
@@ -14307,13 +15087,14 @@ LinalgTensorProduct(left,right) -> {;
 LinalgContract(value,firstAxisValue,secondAxisValue) -> {;
     tensor=LinalgRequireTensor(value); first=LinalgPositiveInteger(firstAxisValue,"First contraction axis");
     second=LinalgPositiveInteger(secondAxisValue,"Second contraction axis"); rank=tensor[:slots].Len();
-    first<=rank && second<=rank && first!=second ?: _ ?_ .Error("Contraction axes must be distinct tensor axes");
+    first<=rank && second<=rank && first!=second ?_> .Error("Contraction axes must be distinct tensor axes");
     a=tensor[:slots][first]; b=tensor[:slots][second];
-    a[:spaceidentity]==b[:spaceidentity] && a[:dual]!=b[:dual]
-      ?: _ ?_ .Error("Contraction requires one primal and one dual slot of the same VectorSpace");
+    LinalgSameSpace(a,b) && a[:dual]!=b[:dual]
+      ?_> .Error(@"Contraction slots @{first} (@{a[:frame][:space][:name]}) and @{second} (@{b[:frame][:space][:name]}) require opposite variance in the same VectorSpace");
     targets=tensor[:slots].Map((slot)->slot[:frame]);
     targets=targets.Set(second,a[:frame]);
-    aligned=a[:frameidentity]==b[:frameidentity] ?: tensor ?_ LinalgTransform(tensor,targets);
+    aligned=LinalgSameFrame(a,b) ?: tensor ?_ LinalgTransform(tensor,targets);
+    !LinalgSparseIs(aligned[:components]) ?_> LinalgSparseContract(aligned,first,second);
     shape=aligned[:components].Shape(); sourceStrides=LinalgStrides(shape);
     remainingShape:=[]; remainingSlots:=[];
     {@ axis=1; axis<=@rank; {;
@@ -14347,6 +15128,10 @@ LinalgContract(value,firstAxisValue,secondAxisValue) -> {;
 };
 
 LinalgPolynomialSpace(maxDegreeValue,variable ?= :x,options ?= {= }) -> {;
+    !(maxDegreeValue ? :Map) ?_> LinalgPolynomialSpace(maxDegreeValue[:maxdegree],LinalgOption(maxDegreeValue,"variable",variable),options.Merge(maxDegreeValue));
+    over=LinalgOption(options,"over",:Rational);
+    over==:Rational ?_> .Error("PolynomialSpace requires the Rational scalar field");
+    maxDegreeValue!=:unbounded ?_> LinalgCountablePolynomialSpace(variable,options);
     maxDegree=LinalgPositiveInteger(maxDegreeValue+1,"Polynomial-space dimension")-1;
     space=LinalgVectorSpace({=
         name=LinalgOption(options,"name",@"Q[@{variable}] degree <= @{maxDegree}"),
@@ -14354,49 +15139,81 @@ LinalgPolynomialSpace(maxDegreeValue,variable ?= :x,options ?= {= }) -> {;
         metadata={= construction=:boundedPolynomialSpace,maxDegree=maxDegree,variable=variable }
     });
     frame=LinalgFrame(space,{= name="monomial",basis=:defining });
+    LinalgPolynomialSpaceValue(space,frame,maxDegree,variable);
+};
+LinalgPolynomialSpaceValue(space,frame,maxDegree,variable,ambient ?= _) -> {;
     adapter={=
-        valueKind=:polynomialSpace,schema="rix.linalg.polynomial-space@1",
+        valueKind=:polynomialSpace,schema="rix.linalg.polynomial-space@1",identityToken=LinalgNewIdentity(),
         adapter="rix.linalg.polynomial-space@1",space=space,frame=frame,
-        maxDegree=maxDegree,variable=variable,exact=1
+        maxDegree=maxDegree,variable=variable,exact=1,ambient=ambient
     };
     adapter.__type="PolynomialSpace";
     adapter._proto={=
-        Realize=(self,value)->LinalgPolynomialRealize(self,value),
+        Realize=(self,value,frame ?= _)->LinalgPolynomialRealize(self,value,frame),
         Reconstruct=(self,vector)->LinalgPolynomialReconstruct(self,vector),
+        Frame=(self)->self[:frame],ScalarField=(self)->LinalgRationalField(),
+        Bounded=(self,degree)->LinalgPolynomialBounded(self,degree),Include=(self,value)->LinalgPolynomialInclude(self,value),Project=(self,value)->LinalgPolynomialProject(self,value),
         Serialize=(self)->LinalgSerialize(self)
     };
     .ImmutableValue(adapter);
 };
 
-LinalgPolynomialRealize(adapter,polynomial) -> {;
-    polynomial ? :Polynomial ?: _ ?_ .Error("PolynomialSpace.Realize requires a Polynomial");
-    polynomial.Degree()<=adapter[:maxdegree] ?: _ ?_ .Error("Polynomial degree exceeds this finite realization space");
-    coefficients:=polynomial.AscendingCoefficients();
-    {@ index=@coefficients.Len()+1; index<=@adapter[:maxdegree]+1; {; @coefficients ~= @coefficients.Push(0); }; index+=1 };
-    vector=LinalgVector(coefficients,adapter[:frame]);
-    vector[:viewof]=polynomial; vector.viewOf=polynomial;
+LinalgPolynomialVariableEqual(left,right) -> .IsExpression(left)
+  ?: .ExpressionVariableMatches(left,right)
+  ?_ .IsExpression(right) ?: .ExpressionVariableMatches(right,left) ?_ left==right;
+LinalgRealizationValue(adapter,polynomial,vector) -> {;
     realization={=
-        valueKind=:linearRealization,schema="rix.linalg.linear-realization@1",
-        adapter=adapter[:adapter],domain=polynomial,vector=vector,space=adapter[:space],frame=adapter[:frame],
+        valueKind=:linearRealization,schema="rix.linalg.linear-realization@1",identityToken=LinalgNewIdentity(),
+        adapter=adapter[:adapter],realization=adapter,domain=polynomial,vector=vector,space=adapter[:space],frame=vector[:slots][1][:frame],
         exact=1,provenance={= plugin=:linalg,version=2,construction=:polynomialCoefficientView }
     };
     realization.__type="LinearRealization";
     realization._proto={=
-        Vector=(self)->self[:vector],Domain=(self)->self[:domain],
-        Reconstruct=(self)->LinalgPolynomialReconstruct(adapter,self[:vector]),
+        Vector=(self,frame ?= _)->frame==_ ?: self[:vector] ?_ LinalgTransform(self[:vector],frame),
+        Domain=(self)->self[:domain],SameSource=(self,other)->LinalgSameSource(self,other),
+        Transform=(self,frame)->LinalgRealizationValue(self[:realization],self[:domain],LinalgTransform(self[:vector],frame)),
+        Reconstruct=(self)->LinalgPolynomialReconstruct(self[:realization],self[:vector]),
         Serialize=(self)->LinalgSerialize(self)
     };
     .ImmutableValue(realization);
 };
+LinalgPolynomialRealize(adapter,polynomial,frameValue ?= _) -> {;
+    polynomial ? :Polynomial ?_> .Error("PolynomialSpace.Realize requires a Polynomial");
+    LinalgPolynomialVariableEqual(polynomial.Variable(),adapter[:variable]) ?_> .Error("Polynomial variable does not match this PolynomialSpace");
+    adapter[:maxdegree]!=:unbounded ?_> LinalgPolynomialSparseRealize(adapter,polynomial,frameValue);
+    polynomial.Degree()<=adapter[:maxdegree] ?_> .Error("Polynomial degree exceeds this finite realization space");
+    coefficients:=polynomial.AscendingCoefficients();
+    coefficients.All((value)->(value ? :Integer)||(value ? :Rational)) ?_> .Error("PolynomialSpace requires exact Rational coefficients");
+    {@ index=@coefficients.Len()+1; index<=@adapter[:maxdegree]+1; {; @coefficients ~= @coefficients.Push(0); }; index+=1 };
+    vector=LinalgVector(coefficients,adapter[:frame]);
+    vector[:viewof]=polynomial; vector.viewOf=polynomial;
+    frame=frameValue==_ ?: adapter[:frame] ?_ LinalgRequireFrame(frameValue);
+    LinalgSameSpace(frame,adapter[:space]) ?_> .Error("Polynomial realization Frame belongs to a different ambient space");
+    selected=LinalgSameFrame(frame,adapter[:frame]) ?: vector ?_ LinalgTransform(vector,frame);
+    LinalgRealizationValue(adapter,polynomial,selected);
+};
+LinalgSourceToken(value,depth ?= 0) -> {;
+    depth<=128 ?_> .Error("Source-link depth budget exceeded");
+    value!=_ ?_> _;
+    (value ? :Polynomial) ?: value.sourceIdentity
+      ?_ LinalgTensorIs(value) ?: LinalgSourceToken(value[:viewof],depth+1)
+      ?_ ((value ? :Map) && value[:schema]=="rix.linalg.linear-realization@1") ?: LinalgSourceToken(value[:domain],depth+1)
+      ?_ _;
+};
+LinalgSameSource(left,right) -> {;
+    token=LinalgSourceToken(left);
+    token!=_ && token==LinalgSourceToken(right);
+};
 
 LinalgPolynomialReconstruct(adapter,vectorValue) -> {;
     vector=LinalgRequireTensor(vectorValue);
-    vector.__type=="Vector" && vector[:slots][1][:spaceidentity]==adapter[:space][:spaceidentity]
-      ?: _ ?_ .Error("Polynomial reconstruction requires a Vector from this PolynomialSpace");
-    aligned=vector[:slots][1][:frameidentity]==adapter[:frame][:frameidentity]
+    LinalgTensorType(vector[:slots])=="Vector" && LinalgSameSpace(vector[:slots][1],adapter[:space])
+      ?_> .Error("Polynomial reconstruction requires a Vector from this PolynomialSpace");
+    aligned=LinalgSameFrame(vector[:slots][1],adapter[:frame])
       ?: vector ?_ LinalgTransform(vector,adapter[:frame]);
+    adapter[:maxdegree]!=:unbounded ?_> LinalgPolynomialSparseReconstruct(adapter,aligned[:components]);
     .poly.Polynomial({=
-        coefficients=LinalgVectorValues(aligned[:components]),order=:ascending,variable=adapter[:variable]
+        coefficients=LinalgVectorValues(LinalgSparseIs(aligned[:components]) ?: aligned[:components].Materialize() ?_ aligned[:components]),order=:ascending,variable=adapter[:variable]
     });
 };
 
@@ -14410,12 +15227,13 @@ LinalgSerialize(value) -> {;
     {? isSpace ? .ImmutableValue({=
            valueKind=:linalgIdentityRecord,schema="rix.linalg.identity-record@1",kind=:vectorSpace,
            id=value[:spaceidentity],name=value[:name],dimension=value[:dimension],over=value[:over],
-           dualOf=LinalgOption(value,"dualof",_),metadata=value[:metadata]
+           dualOf=value[:dualof],metadata=value[:metadata]
        });
        isFrame ? .ImmutableValue({=
            valueKind=:linalgIdentityRecord,schema="rix.linalg.identity-record@1",kind=:frame,
            id=value[:frameidentity],spaceId=value[:spaceidentity],name=value[:name],
-           basis=value[:basis],defining=value[:defining]
+           basis=value[:basis],defining=value[:defining],dualFrame=value[:dualframe],
+           primalFrameId=value[:dualframe]==_ ?: _ ?_ value[:primalframe][:frameidentity],dualBasis=value[:dualbasis]
        });
        isTensor ? .ImmutableValue({=
            valueKind=:linalgIdentityRecord,schema="rix.linalg.identity-record@1",kind=:tensorRepresentation,
@@ -14423,6 +15241,11 @@ LinalgSerialize(value) -> {;
            components=value[:components],slots=value[:slots].Map((slot)->{=
                spaceId=slot[:spaceidentity],frameId=slot[:frameidentity],dual=slot[:dual]
            }),equivalentTo=value[:equivalentto]==_ ?: _ ?_ value[:equivalentto][:representationkey]
+       });
+       LinalgMetricIs(value) ? .ImmutableValue({=
+           valueKind=:linalgIdentityRecord,schema="rix.linalg.identity-record@1",kind=:metric,
+           spaceId=value[:space][:spaceidentity],frameId=value[:frame][:frameidentity],
+           components=value[:components],positiveDefinite=value[:positivedefinite],metadata=value[:metadata]
        });
        isMap ? .ImmutableValue({=
            valueKind=:linalgIdentityRecord,schema="rix.linalg.identity-record@1",kind=:linearMap,
@@ -14444,13 +15267,1361 @@ LinalgSerialize(value) -> {;
            adapter=value[:adapter],spaceId=value[:space][:spaceidentity],frameId=value[:frame][:frameidentity],
            maxDegree=value[:maxdegree],variable=value[:variable]
        });
-       .Error("Serialize needs a VectorSpace, Frame, Tensor, LinearMap, or linear realization")
+       .Error("Serialize needs a VectorSpace, Frame, Metric, Tensor, LinearMap, or linear realization")
     };
+};
+
+### Explicit dual Frames use the primal companion basis; no metric is inferred.
+LinalgDualFrame(frameValue,name ?= _,basisValue ?= _) -> {;
+    frame=LinalgRequireFrame(frameValue);
+    (frame[:dualframe]==_ || name!=_ || basisValue!=_) ?_> frame[:primalframe];
+    frame[:dualframe]==_ ?_> .Error("DualFrame basis must be specified relative to a primal Frame");
+    canonical=name==_ && basisValue==_;
+    cached=@linalgState[:canonicaldualframes].Filter((entry)->entry[:token]==frame[:identitytoken]);
+    (!canonical || cached.Len()==0) ?_> cached[1][:value];
+    chosen=basisValue==_ ?: LinalgIdentityRows(frame[:space][:dimension]) ?_ LinalgMatrixRows(basisValue,"DualFrame basis");
+    chosen.Len()==frame[:space][:dimension] && chosen[1].Len()==frame[:space][:dimension]
+      ?_> .Error("DualFrame basis must match the primal dimension");
+    companionRows=LinalgInverseRows(LinalgTransposeRows(chosen));
+    companion=canonical ?: frame ?_ LinalgFrame(frame[:space],{= name="dual companion",relativeTo=frame,basis=LinalgMatrixValue(companionRows) });
+    result=LinalgFrame(frame[:space],{= name=name==_ ?: @"@{frame[:name]}*" ?_ name,relativeTo=companion,basis=LinalgMatrixValue(LinalgIdentityRows(frame[:space][:dimension])) });
+    result[:dualframe]=1; result[:primalframe]=companion; result[:canonicaldual]=canonical;
+    result[:dualbasis]=LinalgMatrixValue(LinalgInverseRows(LinalgTransposeRows(LinalgMatrixRows(companion[:basis]))));
+    result.dualFrame=1; result.primalFrame=companion; result.dualBasis=result[:dualbasis];
+    canonical ?: {;
+        @frame[:canonicaldualframe]=@result;
+        @linalgState[:canonicaldualframes]=@linalgState[:canonicaldualframes].Push({= frameId=@frame[:frameidentity],token=@frame[:identitytoken],value=@result });
+    } ?_ _;
+    result;
+};
+LinalgActualVariance(frame,dual) -> frame[:dualframe]!=_ ?: !dual ?_ dual;
+
+LinalgTensorEqual(leftValue,rightValue) -> {;
+    LinalgTensorIs(leftValue) && LinalgTensorIs(rightValue) ?_> _;
+    LinalgCompatible(leftValue,rightValue) ?_> _;
+    sameFrames=leftValue[:slots].All((slot,axis)->LinalgSameFrame(slot,rightValue[:slots][axis]));
+    aligned=sameFrames ?: rightValue[:components] ?_ LinalgTransformed(rightValue,leftValue[:slots].Map((slot)->slot[:frame]))[:components];
+    !(LinalgSparseIs(leftValue[:components])||LinalgSparseIs(aligned)) ?_> LinalgSparseEqual(leftValue[:components],aligned);
+    flattened=aligned.Flatten();
+    LinalgVectorValues(leftValue[:components].Flatten()).All((entry,index)->entry==flattened[index]);
+};
+LinalgAxis(value,axisValue,label ?= "Tensor axis") -> {;
+    axis=LinalgPositiveInteger(axisValue,label);
+    axis<=value[:slots].Len() ?_> .Error(@"@{label} @{axis} exceeds rank @{value[:slots].Len()}");
+    axis;
+};
+LinalgAxes(orderValue,rank) -> {;
+    order=orderValue ? :Tuple ?: orderValue.ToArray() ?_ orderValue;
+    order ? :Array ?_> .Error("Slot order must be an Array or Tuple");
+    order.Len()==rank ?_> .Error("Slot permutation rank mismatch");
+    checked=order.Map((axis)->LinalgPositiveInteger(axis,"Permutation axis"));
+    checked.All((axis,index)->axis<=rank && checked.Filter((other)->other==axis).Len()==1)
+      ?_> .Error("Slot permutation must contain every axis exactly once");
+    checked;
+};
+LinalgPermuteComponents(components,order) -> {;
+    !LinalgSparseIs(components) ?_> LinalgSparsePermute(components,order);
+    shape=components.Shape(); targetShape=order.Map((axis)->shape[axis]);
+    sourceStrides=LinalgStrides(shape); targetStrides=LinalgStrides(targetShape);
+    source=components.Flatten(); result:=[];
+    {@ index=0; index<@source.Size(); {;
+        tuple=LinalgTupleForLinear(index,@targetShape,@targetStrides); sourceIndex:=0;
+        {@ axis=1; axis<=@order.Len(); {; @sourceIndex += @tuple[axis]*@sourceStrides[@order[axis]]; }; axis+=1 };
+        @result ~= @result.Push(@source[sourceIndex+1]);
+    }; index+=1 };
+    LinalgShapedFromFlat(result,targetShape);
+};
+LinalgPermute(value,orderValue) -> {;
+    tensor=LinalgRequireTensor(value); order=LinalgAxes(orderValue,tensor[:slots].Len());
+    LinalgTensorValue(LinalgPermuteComponents(tensor[:components],order),order.Map((axis)->tensor[:slots][axis]),{=
+        viewOf=tensor,derivedFrom=[tensor],transform={= kind=:slotPermutation,order=order }
+    });
+};
+LinalgView(value) -> {;
+    tensor=LinalgRequireTensor(value);
+    lineage={= identity=tensor.identity,identityKey=tensor[:identitykey],equivalentTo=tensor,
+        origin=tensor.identity[:origin],viewOf=tensor,transform={= kind=:fullExtentView } };
+    lineage.identity=tensor.identity;
+    LinalgTensorValue(tensor[:components],tensor[:slots],lineage);
+};
+LinalgComponentSlice(value,selectors) -> LinalgRequireTensor(value)[:components].Get(selectors);
+
+LinalgMetricIs(value) -> (value ? :Map) && value[:schema]=="rix.linalg.metric@1";
+LinalgRequireMetric(value) -> {;
+    value!=_ ?_> .Error("This operation requires an explicit Rational metric; no Euclidean identification is implicit");
+    LinalgMetricIs(value) ?_> .Error("Expected an explicit linalg Metric");
+    value;
+};
+LinalgMetric(frameValue,matrixValue,options ?= {= }) -> {;
+    frame=LinalgRequireFrame(frameValue); rows=LinalgMatrixRows(matrixValue,"Metric matrix");
+    frame[:dualframe]==_ ?_> .Error("Metric components must be declared in a primal Frame");
+    rows.Len()==frame[:space][:dimension] && rows[1].Len()==frame[:space][:dimension]
+      ?_> .Error("Metric matrix shape must match its Frame");
+    rows.All((row,i)->row.All((entry,j)->entry==rows[j][i])) ?_> .Error("A Rational metric must be symmetric");
+    inverse=LinalgInverseRows(rows);
+    positive=rows.All((row,size)->LinalgDeterminantRows(rows.Slice(1,size+1).Map((entry)->entry.Slice(1,size+1)))>0);
+    value={= schema="rix.linalg.metric@1",valueKind=:metric,identityToken=LinalgNewIdentity(),space=frame[:space],frame=frame,
+        components=LinalgMatrixValue(rows),inverse=LinalgMatrixValue(inverse),over=:Rational,positiveDefinite=positive,
+        metadata=LinalgOption(options,"metadata",_) };
+    value.__type="Metric";
+    value._proto={=
+        Transform=(self,target)->LinalgMetricTransform(self,target),
+        Dot=(self,left,right)->LinalgMetricDot(left,right,self),
+        Lower=(self,tensor,axis ?= 1)->LinalgMetricIndex(tensor,self,axis,:lower),
+        Raise=(self,tensor,axis ?= 1)->LinalgMetricIndex(tensor,self,axis,:raise),
+        Serialize=(self)->LinalgSerialize(self)
+    };
+    .ImmutableValue(value);
+};
+LinalgMetricTransform(metricValue,targetValue) -> {;
+    metric=LinalgRequireMetric(metricValue); target=LinalgRequireFrame(targetValue);
+    LinalgSameSpace(target,metric[:space]) ?_> .Error("Metric target Frame belongs to an incompatible VectorSpace");
+    target[:dualframe]==_ ?_> .Error("Metric target must be a primal Frame");
+    inverseChange=LinalgChangeRows(target,metric[:frame]);
+    rows=LinalgMultiplyRows(LinalgTransposeRows(inverseChange),LinalgMultiplyRows(LinalgMatrixRows(metric[:components]),inverseChange));
+    LinalgMetric(target,LinalgMatrixValue(rows),{= metadata=metric[:metadata] });
+};
+LinalgMetricIndex(value,metricValue,axisValue,operation) -> {;
+    tensor=LinalgRequireTensor(value); metric=LinalgRequireMetric(metricValue); axis=LinalgAxis(tensor,axisValue);
+    slot=tensor[:slots][axis];
+    LinalgSameSpace(slot,metric[:space]) ?_> .Error(@"Metric does not belong to tensor slot @{axis}'s VectorSpace");
+    (operation==:lower ?: slot[:dual]==_ ?_ slot[:dual]!=_) ?_> .Error(@"Cannot @{operation} tensor slot @{axis} with its existing variance");
+    alignedFrame=slot[:frame][:dualframe]!=_ ?: slot[:frame][:primalframe] ?_ slot[:frame];
+    alignedMetric=LinalgMetricTransform(metric,alignedFrame);
+    matrix=operation==:lower ?: alignedMetric[:components] ?_ alignedMetric[:inverse];
+    components=LinalgTransformAxis(tensor[:components],axis,LinalgMatrixRows(matrix));
+    slots=tensor[:slots].Set(axis,LinalgSlot(alignedFrame,!slot[:dual]));
+    LinalgTensorValue(components,slots,{= derivedFrom=[tensor],transform={= kind=operation,axis=axis,metric=metric } });
+};
+LinalgMetricDot(leftValue,rightValue,metricValue ?= _) -> {;
+    metric=LinalgRequireMetric(metricValue); left=LinalgRequireTensor(leftValue); right=LinalgRequireTensor(rightValue);
+    LinalgTensorType(left[:slots])=="Vector" && LinalgTensorType(right[:slots])=="Vector" ?_> .Error("Metric Dot requires two primal Vectors");
+    LinalgPair(LinalgMetricIndex(left,metric,1,:lower),right);
+};
+LinalgNormSquared(value,metric ?= _) -> LinalgMetricDot(value,value,metric);
+LinalgNorm(value,metricValue ?= _) -> {;
+    metric=LinalgRequireMetric(metricValue);
+    metric[:positivedefinite] ?_> .Error("Norm requires a positive-definite Rational metric");
+    squared=LinalgNormSquared(value,metric); root=LinalgExactSqrt(squared);
+    root!=_ ?_> .ImmutableValue({= status=:unsupportedCoefficientExtension,operation=:norm,exact=1,
+        squaredNorm=squared,requiredExtension={= kind=:squareRoot,radicand=squared } });
+    root;
+};
+LinalgAngle(left,right,metricValue ?= _) -> {;
+    metric=LinalgRequireMetric(metricValue);
+    metric[:positivedefinite] ?_> .Error("Angle requires a positive-definite Rational metric");
+    a=LinalgNormSquared(left,metric); b=LinalgNormSquared(right,metric);
+    a>0 && b>0 ?_> .Error("Angle requires two nonzero Vectors");
+    dot=LinalgMetricDot(left,right,metric); square=a*b;
+    (dot<=0 || dot^2!=square) ?_> 0;
+    denominator=LinalgExactSqrt(square);
+    .ImmutableValue({= status=:unsupportedCoefficientExtension,operation=:angle,exact=1,
+        dot=dot,normProductSquared=square,cosineSquared=dot^2/square,
+        cosine=denominator==_ ?: _ ?_ dot/denominator,
+        requiredExtension={= kind=:inverseCosineOfNormalizedPairing } });
+};
+LinalgTrace(value,first ?= 1,second ?= 2,metric ?= _) -> {;
+    tensor=LinalgRequireTensor(value); a=LinalgAxis(tensor,first); b=LinalgAxis(tensor,second);
+    a!=b ?_> .Error("Trace axes must be distinct");
+    LinalgSameSpace(tensor[:slots][a],tensor[:slots][b])
+      ?_> .Error("Trace slots must belong to the same VectorSpace");
+    aligned=tensor[:slots][a][:dual]!=tensor[:slots][b][:dual]
+      ?: tensor ?_ LinalgMetricIndex(tensor,metric,b,tensor[:slots][b][:dual] ?: :raise ?_ :lower);
+    LinalgContract(aligned,a,b);
+};
+LinalgPermutationChoices(values) -> {;
+    values.Len()==0 ?: [[]] ?_ {;
+        result:=[];
+        {@ index=1; index<=@values.Len(); {;
+            tails=LinalgPermutationChoices(@values.RemoveAt(index));
+            {@ tail=1; tail<=@tails.Len(); {; @result ~= @result.Push([@values[@index]].Concat(@tails[tail])); }; tail+=1 };
+        }; index+=1 };
+        result;
+    };
+};
+LinalgSymmetry(value,axesValue ?= _,antisymmetric ?= _) -> {;
+    tensor=LinalgRequireTensor(value); rank=tensor[:slots].Len();
+    axes=axesValue==_ ?: LinalgZeros(rank).Map((unused,index)->index) ?_ (axesValue ? :Tuple ?: axesValue.ToArray() ?_ axesValue);
+    axes ? :Array ?_> .Error("Symmetry axes must be an Array or Tuple");
+    axes.Len()>=1 && axes.Len()<=6 ?_> .Error("Symmetry requires one to six selected axes (at most 720 permutations)");
+    axes=axes.Map((axis)->LinalgAxis(tensor,axis));
+    axes.All((axis)->axes.Filter((other)->other==axis).Len()==1) ?_> .Error("Symmetry axes must be distinct");
+    first=tensor[:slots][axes[1]];
+    axes.All((axis)->LinalgSameSpace(tensor[:slots][axis],first) && tensor[:slots][axis][:dual]==first[:dual])
+      ?_> .Error("Symmetry requires selected slots from the same VectorSpace with identical variance");
+    choices=LinalgPermutationChoices(axes);
+    !LinalgSparseIs(tensor[:components]) ?_> LinalgSparseSymmetry(tensor,axes,choices,antisymmetric);
+    choices.Len()*tensor[:components].Size()<=131072 ?_> .Error("Symmetry work budget exceeded");
+    frames=tensor[:slots].Map((slot,index)->axes.Any((axis)->axis==index) ?: first[:frame] ?_ slot[:frame]);
+    aligned=LinalgTransformed(tensor,frames)[:components]; total:=LinalgZeros(aligned.Size());
+    {@ choice=1; choice<=@choices.Len(); {;
+        order:=LinalgZeros(@rank).Map((unused,index)->index); selected=@choices[choice]; inversions:=0;
+        {@ position=1; position<=@axes.Len(); {;
+            @order ~= @order.Set(@axes[position],@selected[position]);
+            {@ later=@position+1; later<=@axes.Len(); {; @axes.IndexOf(@selected[@position])>@axes.IndexOf(@selected[later]) ?: {; @inversions+=1; } ?_ _; }; later+=1 };
+        }; position+=1 };
+        sign=(@antisymmetric && inversions%2==1) ?: -1 ?_ 1;
+        entries=LinalgPermuteComponents(@aligned,order).Flatten();
+        @total ~= @total.Map((entry,index)->entry+sign*entries[index]);
+    }; choice+=1 };
+    components=LinalgShapedFromFlat(total.Map((entry)->entry/choices.Len()),tensor[:components].Shape());
+    common={= components=components,slots=tensor[:slots].Map((slot,index)->LinalgSlot(frames[index],slot[:dual])) };
+    final=LinalgTransformed(common,tensor[:slots].Map((slot)->slot[:frame]))[:components];
+    LinalgTensorValue(final,tensor[:slots],{= derivedFrom=[tensor],transform={= kind=antisymmetric ?: :antisymmetrize ?_ :symmetrize,axes=axes,terms=choices.Len() } });
+};
+LinalgTensorPower(value,exponentValue) -> {;
+    tensor=LinalgRequireTensor(value); exponent=exponentValue ~!: :Integer;
+    exponent!=_ && exponent>=0 && exponent<=8 ?_> .Error("TensorPower exponent must be an Integer from zero through eight");
+    support=LinalgSparseIs(tensor[:components]) ?: tensor[:components].SupportSize() ?_ tensor[:components].Size();
+    support^exponent<=65536 ?_> .Error("TensorPower component budget exceeded");
+    exponent==0 ?: 1 ?_ exponent==1 ?: LinalgView(tensor) ?_ {;
+        result:=[@tensor];
+        {@ power=2; power<=@exponent; {; @result ~= [LinalgTensorProductValues(@result[1],@tensor)]; }; power+=1 };
+        result[1];
+    };
+};
+
+### Finite exact spectral services over Q. No extension field is inferred.
+LinalgSpectralLimits(options) -> {;
+    dimension=LinalgPositiveInteger(LinalgOption(options,"maxdimension",8),"Spectral dimension budget");
+    trials=LinalgPositiveInteger(LinalgOption(options,"maxroottrials",10000),"Rational-root trial budget");
+    candidates=LinalgPositiveInteger(LinalgOption(options,"maxrootcandidates",4096),"Rational-root candidate budget");
+    dimension<=16 && trials<=100000 && candidates<=65536 ?_> .Error("Spectral budget exceeds supported hard bounds");
+    {= maxDimension=dimension,maxRootTrials=trials,maxRootCandidates=candidates };
+};
+LinalgSpectralRows(value,limits) -> {;
+    map=LinalgLinearMapIs(value);
+    (!map || LinalgSameSpace(value[:domain],value[:codomain])) ?_> .Error("Spectral services require an endomorphism of one VectorSpace");
+    input=map ?: value[:matrix] ?_ value;
+    shaped=input ? :Shaped;
+    (shaped || (input ? :Array)) ?_> .Error("Spectral matrix must be Shaped or an Array of rows");
+    count=shaped ?: input.Shape()[1] ?_ input.Len();
+    count>=1 && count<=limits[:maxdimension] ?_> .Error("Spectral matrix exceeds the dimension budget or is empty");
+    square=shaped ?: (input.Shape().Len()==2 && input.Shape()[2]==count)
+      ?_ input.All((row)->(row ? :Array) ?: row.Len()==count ?_ ((row ? :Shaped) && row.Shape().Len()==1 && row.Size()==count));
+    square ?_> .Error("Spectral services require a square Rational matrix");
+    rows=map ?: LinalgMultiplyRows(LinalgChangeRows(value[:targetframe],value[:sourceframe]),LinalgMatrixRows(value[:matrix]))
+      ?_ LinalgMatrixRows(value,"Spectral matrix");
+    rows.Len()==rows[1].Len() ?_> .Error("Spectral services require a square Rational matrix");
+    rows.Len()<=limits[:maxdimension] ?_> .Error("Spectral matrix exceeds the dimension budget"); rows;
+};
+LinalgSpectralShift(rows,scalar) -> rows.Map((row,i)->row.Map((entry,j)->i==j ?: entry+scalar ?_ entry));
+LinalgSpectralTrace(rows) -> {;
+    result:=0; {@ index=1;index<=@rows.Len();{; @result+=@rows[index][index]; };index+=1 }; result;
+};
+LinalgCharacteristicRows(rows,variable) -> {;
+    n=rows.Len(); recurrence:=LinalgIdentityRows(n); descending:=[1];
+    {@ degree=1;degree<=@n;{;
+        product=LinalgMultiplyRows(@rows,@recurrence); coefficient=-LinalgSpectralTrace(product)/degree;
+        @descending ~= @descending.Push(coefficient);
+        @recurrence ~= LinalgSpectralShift(product,coefficient);
+    };degree+=1 };
+    .poly.Polynomial({= coefficients=descending,order=:descending,variable=variable });
+};
+LinalgPolynomialMatrixRows(rows,polynomial) -> {;
+    coefficients=polynomial.Coefficients(); result:=rows.Map((row)->row.Map((entry)->0));
+    {@ index=1;index<=@coefficients.Len();{;
+        @result ~= LinalgSpectralShift(LinalgMultiplyRows(@result,@rows),@coefficients[index]);
+    };index+=1 }; result;
+};
+LinalgAnnihilates(rows,polynomial) -> LinalgPolynomialMatrixRows(rows,polynomial).All((row)->LinalgAllZero(row));
+LinalgMinimalRows(rows,variable) -> {;
+    n=rows.Len(); identity=LinalgIdentityRows(n); powers:=[LinalgFlattenRows(identity)]; current:=identity;
+    {@ degree=1;degree<=@n;{;
+        @current ~= LinalgMultiplyRows(@current,@rows);
+        target=LinalgFlattenRows(@current).Map((entry)->-entry);
+        columns=@powers; system=target.Map((entry,index)->columns.Map((power)->power[index]));
+        solved=LinalgSolveValues(system,target);
+        solved[:status]=="inconsistent" ?_> .poly.Polynomial({= coefficients=LinalgVectorValues(solved[:particular]).Push(1),order=:ascending,variable=@variable });
+        @powers ~= @powers.Push(LinalgFlattenRows(@current));
+    };degree+=1 };
+    .Error("Exact minimal-polynomial search did not find a Cayley-Hamilton relation");
+};
+LinalgCharacteristicPolynomial(value,variable ?= :x,options ?= {= }) -> {;
+    limits=LinalgSpectralLimits(options); rows=LinalgSpectralRows(value,limits);
+    selected=.ExpressionVariableSelector(_,variable); result=LinalgCharacteristicRows(rows,selected);
+    LinalgAnnihilates(rows,result) ?_> .Error("Characteristic-polynomial annihilation verification failed"); result;
+};
+LinalgMinimalPolynomial(value,variable ?= :x,options ?= {= }) -> {;
+    limits=LinalgSpectralLimits(options); rows=LinalgSpectralRows(value,limits);
+    selected=.ExpressionVariableSelector(_,variable); result=LinalgMinimalRows(rows,selected);
+    LinalgAnnihilates(rows,result) ?_> .Error("Minimal-polynomial annihilation verification failed"); result;
+};
+LinalgIntegerGcd(left,right) -> {;
+    a:=(left ~!: :Integer).Abs();b:=(right ~!: :Integer).Abs();
+    {@ step=1;@b!=0;{; remainder:=@a%@b;@a~=@b;@b~=remainder; };step+=1 };a;
+};
+LinalgPrimitivePolynomial(polynomial) -> {;
+    coefficients=polynomial.AscendingCoefficients(); denominator:=1;
+    {@ index=1;index<=@coefficients.Len();{;
+        d:=@coefficients[index].Denominator();@denominator ~= (@denominator//LinalgIntegerGcd(@denominator,d))*d;
+    };index+=1 };
+    integers=coefficients.Map((coefficient)->coefficient.Numerator()*(denominator//coefficient.Denominator())); content:=0;
+    {@ index=1;index<=@integers.Len();{; @content ~= LinalgIntegerGcd(@content,@integers[index]); };index+=1 };
+    integers.Map((entry)->entry//content);
+};
+LinalgBoundedDivisors(value,state) -> {;
+    number=value.Abs();lower:=[];upper:=[];
+    {@ candidate=1;candidate*candidate<=@number;{;
+        @state[:trials]+=1;
+        @state[:trials]<=@state[:limit] ?_> _;
+        @number%candidate==0 ?: {;
+            @lower ~= @lower.Push(@candidate);pair=@number//@candidate;
+            pair!=@candidate ?: {; @upper ~= @upper.Push(@pair); } ?_ _;
+        } ?_ _;
+    };candidate+=1 };
+    lower.Concat(upper.Reverse());
+};
+LinalgRationalRootSearch(polynomial,limits) -> {;
+    coefficients=LinalgPrimitivePolynomial(polynomial); nonzero=coefficients.Filter((entry)->entry!=0);
+    zero=coefficients[1]==0; known=zero ?: [0] ?_ [];
+    state={= trials=0,limit=limits[:maxroottrials] };state._mutable=1;
+    numerators=LinalgBoundedDivisors(nonzero[1],state);
+    numerators!=_ ?_> {= complete=_,roots=known,reason=:rootTrialBudget,trials=state[:trials],candidates=0 };
+    denominators=LinalgBoundedDivisors(coefficients.Last(),state);
+    denominators!=_ ?_> {= complete=_,roots=known,reason=:rootTrialBudget,trials=state[:trials],candidates=0 };
+    count=2*numerators.Len()*denominators.Len()+known.Len();
+    count<=limits[:maxrootcandidates] ?_> {= complete=_,roots=known,reason=:rootCandidateBudget,trials=state[:trials],candidates=0 };
+    candidates:=known;
+    {@ i=1;i<=@numerators.Len();{;
+        {@ j=1;j<=@denominators.Len();{;
+            q=@numerators[@i]/@denominators[j];@candidates ~= @candidates.Push(q).Push(-q);
+        };j+=1 };
+    };i+=1 };
+    roots=candidates.Distinct().Sort().Filter((candidate)->polynomial.Evaluate(candidate)==0);
+    {= complete=1,roots=roots,reason=_,trials=state[:trials],candidates=candidates.Len() };
+};
+LinalgRootMultiplicity(polynomial,root) -> {;
+    residual:=[polynomial]; multiplicity:=0;
+    {@ step=1;step<=@polynomial.Degree() && @residual[1].Evaluate(@root)==0;{;
+        division=@residual[1].SyntheticDiv(@root);@residual ~= [division[:quotient]];@multiplicity+=1;
+    };step+=1 };
+    {= multiplicity=multiplicity,residual=residual[1] };
+};
+LinalgEigenspaceRecord(rows,polynomial,root) -> {;
+    kernel=LinalgNullSpace(LinalgMatrixValue(LinalgSpectralShift(rows,-root)));
+    kernel.Verify() ?_> .Error("Exact eigenspace residual verification failed");
+    {= root=root,algebraicMultiplicity=LinalgRootMultiplicity(polynomial,root)[:multiplicity],
+       geometricMultiplicity=kernel[:dimension],basis=kernel[:basis].Map((vector)->LinalgVectorValues(vector)),
+       rank=rows.Len()-kernel[:dimension] };
+};
+LinalgSpectralRecord(rows,variable,limits) -> {;
+    characteristic=LinalgCharacteristicRows(rows,variable);minimal=LinalgMinimalRows(rows,variable);
+    LinalgAnnihilates(rows,characteristic) && LinalgAnnihilates(rows,minimal)
+      ?_> .Error("Spectral polynomial annihilation verification failed");
+    roots=LinalgRationalRootSearch(characteristic,limits);
+    spaces=roots[:roots].Map((root)->LinalgEigenspaceRecord(rows,characteristic,root));
+    residual:=[characteristic]; dimension:=0;
+    {@ index=1;index<=@spaces.Len();{;
+        @residual ~= [LinalgRootMultiplicity(@residual[1],@spaces[index][:root])[:residual]];
+        @dimension+=@spaces[index][:geometricmultiplicity];
+    };index+=1 };
+    {= schema="rix.linalg.spectral@1",kind=:rationalSpectral,field=:Rational,source=rows,variable=variable,
+       characteristic=characteristic.AscendingCoefficients(),minimal=minimal.AscendingCoefficients(),
+       eigenspaces=spaces,rootSearch=roots,residual=residual[1].AscendingCoefficients(),
+       diagonalizableOverRational=dimension==rows.Len() ?: 1 ?_ roots[:complete] ?: _ ?_ ?,
+       canonicalForms={= status=:unsupported,reason=:canonicalFormsNotImplemented,extensionFieldRequired=roots[:complete] ?: residual[1].Degree()>0 ?_ ? },
+       budgets=limits };
+};
+LinalgRationalEigenspaces(value,variable ?= :x,options ?= {= }) -> {;
+    limits=LinalgSpectralLimits(options);rows=LinalgSpectralRows(value,limits);selected=.ExpressionVariableSelector(_,variable);
+    record=LinalgSpectralRecord(rows,selected,limits);result=record.Merge({= verified=1 });
+    result.__type="RationalSpectralEvidence";
+    result._proto={=
+        Verify=(self)->LinalgVerifySpectral(self.Record(),limits),
+        Record=(self)->record,
+        Spaces=(self)->self[:eigenspaces],Roots=(self)->self[:rootsearch][:roots],
+        CharacteristicPolynomial=(self)->.poly.Polynomial({= coefficients=self[:characteristic],order=:ascending,variable=self[:variable] }),
+        MinimalPolynomial=(self)->.poly.Polynomial({= coefficients=self[:minimal],order=:ascending,variable=self[:variable] })
+    };
+    .ImmutableValue(result);
+};
+LinalgVerifySpectral(value,options ?= _) -> {;
+    record=.MathDecodeJSON(.MathEncodeJSON(value));
+    LinalgGraphKeys(record,["schema","kind","field","source","variable","characteristic","minimal","eigenspaces","rootsearch","residual","diagonalizableoverrational","canonicalforms","budgets"]);
+    record[:schema]=="rix.linalg.spectral@1" && record[:kind]==:rationalSpectral && record[:field]==:Rational
+      ?_> .Error("Unsupported spectral evidence record");
+    LinalgGraphKeys(record[:budgets],["maxdimension","maxroottrials","maxrootcandidates"]);
+    limits=LinalgSpectralLimits(options==_ ?: record[:budgets] ?_ options); rows=LinalgSpectralRows(record[:source],limits);variable=LinalgGraphVariable(record[:variable]);
+    computed=LinalgSpectralRecord(rows,variable,limits);
+    .MathEncodeJSON(record)==.MathEncodeJSON(computed) ?_> .Error("Spectral evidence does not reproduce under the supplied verification budgets"); 1;
+};
+
+LinalgRationalField() -> {;
+    value={= schema="rix.scalar-field@1",id="rix.scalar-field.rational@1",name=:Rational,exact=1,characteristic=0,zero=0,one=1 };
+    value._proto={=
+        Contains=(self,x)->(x ? :Integer)||(x ? :Rational),Coerce=(self,x)->LinalgExact(x),
+        Add=(self,a,b)->LinalgExact(a)+LinalgExact(b),Subtract=(self,a,b)->LinalgExact(a)-LinalgExact(b),
+        Multiply=(self,a,b)->LinalgExact(a)*LinalgExact(b),Divide=(self,a,b)->LinalgExact(a)/LinalgExact(b),
+        Negate=(self,a)->-LinalgExact(a),Equal=(self,a,b)->LinalgExact(a)==LinalgExact(b),
+        Zero=(self)->0,One=(self)->1
+    };
+    .ImmutableValue(value);
+};
+LinalgCoordinateStorage(input) -> {;
+    storage=LinalgTensorIs(input) ?: input[:components] ?_ input;
+    !LinalgSparseIs(storage) ?_> storage;
+    storage ? :Shaped ?_> .Error("Coordinate storage requires Shaped or finite-support components");
+    LinalgVectorValues(storage.Flatten());
+    value={= schema="rix.coordinate-storage@1",kind=:denseShaped,finite=1,scalarField="rix.scalar-field.rational@1",storage=storage };
+    value._proto={=
+        Shape=(self)->self[:storage].Shape(),Size=(self)->self[:storage].Size(),
+        Get=(self,indices)->self[:storage].Get(indices),Entries=(self)->LinalgVectorValues(self[:storage].Flatten()),
+        Materialize=(self,maxCells ?= 65536)->LinalgCoordinateMaterialize(self,maxCells),
+        ScalarField=(self)->LinalgRationalField()
+    };
+    .ImmutableValue(value);
+};
+LinalgCoordinateMaterialize(value,maxCellsValue) -> {;
+    maxCells=LinalgPositiveInteger(maxCellsValue,"Coordinate materialization budget");
+    value[:storage].Size()<=maxCells ?_> .Error("Coordinate materialization component budget exceeded");
+    value[:storage] ~!: :Shaped;
+};
+
+### Canonical algebraic finite support. Countable axes use nonnegative keys.
+LinalgSparseIs(value) -> (value ? :Map) && value[:schema]=="rix.coordinate-storage@1" && value[:kind]==:finiteSupport;
+LinalgSparseLimits(options) -> {;
+    support=LinalgPositiveInteger(LinalgOption(options,"maxsupport",256),"Sparse support budget");
+    work=LinalgPositiveInteger(LinalgOption(options,"maxwork",65536),"Sparse work budget");
+    index=LinalgPositiveInteger(LinalgOption(options,"maxindex",4096),"Sparse index budget");
+    support<=2048 && work<=1048576 && index<=65536 ?_> .Error("Sparse budget exceeds supported hard bounds");
+    {= maxSupport=support,maxWork=work,maxIndex=index };
+};
+LinalgSparseShape(value) -> {;
+    shape=value ? :Tuple ?: value.ToArray() ?_ value;
+    shape ? :Array ?_> .Error("Sparse shape must be an Array or Tuple");
+    shape.Len()>=1 && shape.Len()<=32 ?_> .Error("Sparse rank must be between one and 32");
+    shape.All((extent)->extent==:countable || ((extent ? :Integer) && extent>=1 && extent<=65536))
+      ?_> .Error("Sparse dimensions must be finite positive Integers or :countable");shape;
+};
+LinalgSparseIndices(value,shape,limits) -> {;
+    indices=value ? :Tuple ?: value.ToArray() ?_ value;
+    indices ? :Array ?_> .Error("Sparse indices must be an Array or Tuple");
+    indices.Len()==shape.Len() ?_> .Error("Sparse index rank mismatch");
+    indices.All((key,axis)->(key ? :Integer) && key<=limits[:maxindex] && (shape[axis]==:countable ?: key>=0 ?_ key>=1 && key<=shape[axis]))
+      ?_> .Error("Sparse index is outside its axis or index budget");indices;
+};
+LinalgSparseCompare(left,right) -> {;
+    {@ axis=1;axis<=@left.Len();{;
+        @left[axis]==@right[axis] ?_> (@left[axis]<@right[axis] ?: -1 ?_ 1);
+    };axis+=1 };0;
+};
+LinalgSparseCanonical(terms,shape,limits) -> {;
+    terms ? :Array ?_> .Error("Sparse terms must be an Array");
+    terms.Len()<=limits[:maxwork] ?_> .Error("Sparse input exceeds the work budget");
+    result:=[];work:=0;
+    {@ index=1;index<=@terms.Len();{;
+        term=@terms[index];LinalgGraphKeys(term,["indices","value"]);
+        indices=LinalgSparseIndices(term[:indices],@shape,@limits);scalar=LinalgExact(term[:value],"Sparse coefficient");
+        scalar!=0 ?: {;
+            position:=1;found:=_;
+            {@ scan=1;scan<=@result.Len() && !@found;{;
+                @work+=1;@work<=@limits[:maxwork] ?_> .Error("Sparse canonicalization exceeds the work budget");
+                comparison=LinalgSparseCompare(@indices,@result[scan][:indices]);
+                comparison>0 ?: {; @position+=1; } ?_ {; @found=1; };
+            };scan+=1 };
+            match=position<=@result.Len() ?: LinalgSparseCompare(@indices,@result[position][:indices])==0 ?_ _;
+            match ?: {;
+                sum=@result[@position][:value]+@scalar;
+                @result ~= sum==0 ?: @result.RemoveAt(@position) ?_ @result.Set(@position,{= indices=@indices,value=sum });
+            } ?_ {;
+                @result.Len()<@limits[:maxsupport] ?_> .Error("Sparse support budget exceeded");
+                @result ~= @result.Slice(1,@position).Push({= indices=@indices,value=@scalar }).Concat(@result.Slice(@position));
+            };
+        } ?_ _;
+    };index+=1 };result;
+};
+LinalgSparseCoordinates(terms,shapeValue,options ?= {= }) -> {;
+    limits=LinalgSparseLimits(options);shape=LinalgSparseShape(shapeValue);
+    canonical=LinalgSparseCanonical(terms,shape,limits);
+    value={= schema="rix.coordinate-storage@1",kind=:finiteSupport,finite=1,scalarField="rix.scalar-field.rational@1",shape=shape,terms=canonical,budgets=limits };
+    value._proto={=
+        Shape=(self)->self[:shape],Size=(self)->LinalgSparseSize(self),SupportSize=(self)->self[:terms].Len(),
+        Entries=(self)->self[:terms],Get=(self,indices)->LinalgSparseGet(self,indices),
+        Materialize=(self,maxCells ?= 65536)->LinalgSparseMaterialize(self,maxCells),
+        MatMul=(self,other)->LinalgSparseMatMul(self,other),Apply=(self,other)->LinalgSparseApply(self,other),
+        Add=(self,other)->LinalgSparseAdd(self,other),Scale=(self,scalar)->LinalgSparseScale(self,scalar),
+        TensorProduct=(self,other)->LinalgSparseProduct(self,other),Permute=(self,order)->LinalgSparsePermute(self,order),
+        Equal=(self,other)->LinalgSparseEqual(self,other),ScalarField=(self)->LinalgRationalField(),
+        Record=(self)->{= schema=self[:schema],kind=self[:kind],finite=self[:finite],scalarField=self[:scalarfield],shape=self[:shape],terms=self[:terms],budgets=self[:budgets] },
+        Verify=(self)->LinalgVerifyCoordinates(self.Record())
+    };
+    .ImmutableValue(value);
+};
+LinalgSparseSize(value) -> {;
+    value[:shape].All((extent)->extent!=:countable) ?_> _;
+    count:=1;{@ axis=1;axis<=@value[:shape].Len();{; @count*=@value[:shape][axis]; };axis+=1 };count;
+};
+LinalgSparseGet(value,indicesValue) -> {;
+    indices=LinalgSparseIndices(indicesValue,value[:shape],value[:budgets]);
+    terms=value[:terms].Filter((term)->LinalgSparseCompare(term[:indices],indices)==0);
+    terms.Len()==0 ?: 0 ?_ terms[1][:value];
+};
+LinalgSparseMaterialize(value,maxCellsValue) -> {;
+    maxCells=LinalgPositiveInteger(maxCellsValue,"Sparse materialization budget");count=value.Size();
+    count!=_ ?_> .Error("Countable coordinates require an explicit finite projection before materialization");
+    maxCells<=262144 && count<=maxCells ?_> .Error("Sparse materialization component budget exceeded");
+    entries:=LinalgZeros(count);strides=LinalgStrides(value[:shape]);
+    {@ term=1;term<=@value[:terms].Len();{;
+        item=@value[:terms][term];linear:=1;
+        {@ axis=1;axis<=@strides.Len();{; @linear+=(@item[:indices][axis]-1)*@strides[axis]; };axis+=1 };
+        @entries ~= @entries.Set(linear,item[:value]);
+    };term+=1 };LinalgShapedFromFlat(entries,value[:shape]);
+};
+LinalgAsSparse(value,options ?= _) -> {;
+    LinalgSparseIs(value) ?_> LinalgDenseSparse(value,options==_ ?: {= } ?_ options);
+    value;
+};
+LinalgDenseSparse(value,options) -> {;
+    storage=LinalgCoordinateStorage(value);dense=storage.Materialize(65536);shape=dense.Shape().ToArray();strides=LinalgStrides(shape);terms:=[];flat=dense.Flatten();
+    flat.Size()<=LinalgSparseLimits(options)[:maxwork] ?_> .Error("Dense conversion exceeds the sparse work budget");
+    {@ linear=0;linear<@flat.Size();{;
+        @flat[linear+1]!=0 ?: {; @terms ~= @terms.Push({= indices=LinalgTupleForLinear(@linear,@shape,@strides).Map((index)->index+1),value=@flat[@linear+1] }); } ?_ _;
+    };linear+=1 };LinalgSparseCoordinates(terms,shape,options);
+};
+LinalgSparseCommon(left,right) -> {;
+    a=LinalgAsSparse(left);b=LinalgAsSparse(right,a[:budgets]);
+    a[:shape].Len()==b[:shape].Len() && a[:shape].All((extent,index)->extent==b[:shape][index]) ?_> .Error("Sparse coordinate shapes must agree");b;
+};
+LinalgSparseAdd(left,right) -> {;
+    a=LinalgAsSparse(left);b=LinalgSparseCommon(a,right);LinalgSparseCoordinates(a[:terms].Concat(b[:terms]),a[:shape],a[:budgets]);
+};
+### Finite sparse linear kernels: no dense intermediate and no approximate conversion.
+LinalgSparseMatMul(left,right) -> {;
+    a=LinalgAsSparse(left);b=LinalgAsSparse(right,a[:budgets]);
+    a[:shape].Len()==2 && b[:shape].Len()==2 ?_> .Error("Sparse MatMul requires two rank-2 matrices");
+    a[:shape].All((n)->n!=:countable) && b[:shape].All((n)->n!=:countable) ?_> .Error("Sparse MatMul requires finite axes");
+    a[:shape][2]==b[:shape][1] ?_> .Error("Sparse MatMul dimensions must agree");
+    a.SupportSize()*b.SupportSize()<=a[:budgets][:maxwork] ?_> .Error("Sparse MatMul work budget exceeded");
+    terms:=[];
+    {@ i=1;i<=@a.SupportSize();{;
+        x=@a[:terms][i];
+        {@ j=1;j<=@b.SupportSize();{;
+            y=@b[:terms][j];
+            @x[:indices][2]==y[:indices][1] ?: {;
+                @terms ~= @terms.Push({= indices=[@x[:indices][1],@y[:indices][2]],value=@x[:value]*@y[:value] });
+            } ?_ _;
+        };j+=1 };
+    };i+=1 };LinalgSparseCoordinates(terms,[a[:shape][1],b[:shape][2]],a[:budgets]);
+};
+LinalgSparseApply(left,right) -> {;
+    a=LinalgAsSparse(left);b=LinalgAsSparse(right,a[:budgets]);
+    a[:shape].Len()==2 && b[:shape].Len()==1 ?_> .Error("Sparse Apply requires a rank-2 matrix and rank-1 vector");
+    b[:shape][1]!=:countable ?_> .Error("Sparse Apply requires finite axes");
+    column=LinalgSparseCoordinates(b[:terms].Map((term)->{= indices=[term[:indices][1],1],value=term[:value] }),[b[:shape][1],1],a[:budgets]);
+    result=LinalgSparseMatMul(a,column);
+    LinalgSparseCoordinates(result[:terms].Map((term)->{= indices=[term[:indices][1]],value=term[:value] }),[a[:shape][1]],a[:budgets]);
+};
+LinalgSparseScale(value,scalarValue) -> {;
+    a=LinalgAsSparse(value);scalar=LinalgExact(scalarValue,"Sparse scalar");
+    LinalgSparseCoordinates(a[:terms].Map((term)->{= indices=term[:indices],value=term[:value]*scalar }),a[:shape],a[:budgets]);
+};
+LinalgSparseProduct(left,right) -> {;
+    a=LinalgAsSparse(left);b=LinalgAsSparse(right,a[:budgets]);count=a[:terms].Len()*b[:terms].Len();
+    count<=a[:budgets][:maxsupport] && count<=a[:budgets][:maxwork] ?_> .Error("Sparse tensor-product support/work budget exceeded");terms:=[];
+    {@ i=1;i<=@a[:terms].Len();{;
+        {@ j=1;j<=@b[:terms].Len();{;
+            @terms ~= @terms.Push({= indices=@a[:terms][@i][:indices].Concat(@b[:terms][j][:indices]),value=@a[:terms][@i][:value]*@b[:terms][j][:value] });
+        };j+=1 };
+    };i+=1 };LinalgSparseCoordinates(terms,a[:shape].Concat(b[:shape]),a[:budgets]);
+};
+LinalgSparsePermute(value,orderValue) -> {;
+    order=LinalgAxes(orderValue,value[:shape].Len());
+    LinalgSparseCoordinates(value[:terms].Map((term)->{= indices=order.Map((axis)->term[:indices][axis]),value=term[:value] }),order.Map((axis)->value[:shape][axis]),value[:budgets]);
+};
+LinalgSparseEqual(left,right) -> {;
+    a=LinalgAsSparse(left);b=LinalgSparseCommon(a,right);
+    a[:terms].Len()==b[:terms].Len() && a[:terms].All((term,index)->LinalgSparseCompare(term[:indices],b[:terms][index][:indices])==0 && term[:value]==b[:terms][index][:value]);
+};
+LinalgRestoreCoordinates(recordValue) -> {;
+    record=.MathDecodeJSON(.MathEncodeJSON(recordValue));
+    LinalgGraphKeys(record,["schema","kind","finite","scalarfield","shape","terms","budgets"]);
+    record[:schema]=="rix.coordinate-storage@1" && record[:kind]==:finiteSupport && record[:finite]==1 && record[:scalarfield]=="rix.scalar-field.rational@1"
+      ?_> .Error("Unsupported sparse coordinate record");
+    LinalgGraphKeys(record[:budgets],["maxsupport","maxwork","maxindex"]);
+    restored=LinalgSparseCoordinates(record[:terms],record[:shape],record[:budgets]);
+    .MathEncodeJSON(restored.Record())==.MathEncodeJSON(record) ?_> .Error("Sparse coordinate record must be canonical");restored;
+};
+LinalgVerifyCoordinates(record) -> {; LinalgRestoreCoordinates(record);1;};
+
+LinalgSparsePair(left,right) -> {;
+    a=LinalgAsSparse(left);b=LinalgSparseCommon(a,right);
+    a.SupportSize()*b.SupportSize()<=a[:budgets][:maxwork] ?_> .Error("Sparse pairing work budget exceeded");sum:=0;
+    {@ index=1;index<=@a[:terms].Len();{; @sum+=@a[:terms][index][:value]*@b.Get(@a[:terms][index][:indices]); };index+=1 };sum;
+};
+LinalgSparseTransformed(value,targets) -> {;
+    components:=[value[:components]];changes:=[];
+    {@ axis=1;axis<=@value[:slots].Len();{;
+        slot=@value[:slots][axis];target=LinalgRequireFrame(@targets[axis]);
+        LinalgSameSpace(slot,target) ?_> .Error("Target Frame must belong to the sparse tensor slot's VectorSpace");
+        same=LinalgSameFrame(slot,target);
+        same ?: {; @changes ~= @changes.Push(_); } ?_ {;
+            @slot[:frame][:space][:dimension]!=:countable ?_> .Error("Countable coordinates currently support only their monomial Frame");
+            change=LinalgChangeRows(@slot[:frame],@target);applied=@slot[:dual] ?: LinalgInverseRows(LinalgTransposeRows(change)) ?_ change;
+            storage=@components[1];terms:=[];extent=storage[:shape][@axis];
+            storage.SupportSize()*extent<=storage[:budgets][:maxwork] ?_> .Error("Sparse frame-change work budget exceeded");
+            {@ term=1;term<=@storage.SupportSize();{;
+                item=@storage[:terms][term];
+                {@ row=1;row<=@extent;{;
+                    coefficient=@item[:value]*@applied[row][@item[:indices][@axis]];
+                    coefficient!=0 ?: {; @terms ~= @terms.Push({= indices=@item[:indices].Set(@axis,@row),value=@coefficient }); } ?_ _;
+                };row+=1 };
+            };term+=1 };
+            @components ~= [LinalgSparseCoordinates(terms,storage[:shape],storage[:budgets])];
+            @changes ~= @changes.Push(LinalgMatrixValue(applied));
+        };
+    };axis+=1 };{= components=components[1],changes=changes };
+};
+LinalgSparseContract(tensor,first,second) -> {;
+    storage=tensor[:components];remaining=LinalgZeros(tensor[:slots].Len()).Map((unused,index)->index).Filter((axis)->axis!=first && axis!=second);
+    selected=storage[:terms].Filter((term)->term[:indices][first]==term[:indices][second]);
+    remaining.Len()>0 ?_> {;
+        sum:=0;{@ index=1;index<=@selected.Len();{; @sum+=@selected[index][:value]; };index+=1 };sum;
+    };
+    terms=selected.Map((term)->{= indices=remaining.Map((axis)->term[:indices][axis]),value=term[:value] });
+    shape=remaining.Map((axis)->storage[:shape][axis]);slots=remaining.Map((axis)->tensor[:slots][axis]);
+    LinalgTensorValue(LinalgSparseCoordinates(terms,shape,storage[:budgets]),slots,{= derivedFrom=[tensor],transform={= kind=:contraction,axes=[first,second] } });
+};
+
+### Countable monomial Frames describe finite polynomials, never series.
+LinalgCountablePolynomialSpace(variableValue,options) -> {;
+    variable=.ExpressionVariableSelector(_,variableValue);limits=LinalgSparseLimits(options);
+    space=LinalgVectorSpace({= name=LinalgOption(options,"name",@"Q[@{variable}]"),dimension=1,over=:Rational,lineageLimit=LinalgOption(options,"lineagelimit",30),metadata={= construction=:finitePolynomialSpace,variable=variable } });
+    space[:dimension]=:countable;space.dimension=:countable;
+    frame={= valueKind=:frame,schema="rix.linalg.frame@1",name="monomial",space=space,spaceIdentity=space[:spaceidentity],spaceToken=space[:identitytoken],identityToken=LinalgNewIdentity(),frameIdentity=LinalgNextIdentity(:frame),
+        relativeTo=_,localBasis=_,basis=_,inverseBasis=_,defining=1,metadata={= construction=:countableMonomial,variable=variable,budgets=limits } };
+    frame.__type="Frame";frame._mutable=1;
+    frame._proto={= BasisAt=(self,index)->LinalgMonomialBasisAt(self,index),ScalarField=(self)->LinalgRationalField() };
+    frame.space=space;frame.spaceIdentity=frame[:spaceidentity];frame.frameIdentity=frame[:frameidentity];frame.name=frame[:name];frame.defining=1;
+    space[:definingframe]=frame;space.definingFrame=frame;
+    LinalgPolynomialSpaceValue(space,frame,:unbounded,variable);
+};
+LinalgMonomialBasisAt(frame,indexValue) -> {;
+    index=LinalgGraphInteger(indexValue,0,frame[:metadata][:budgets][:maxindex],"Monomial degree");
+    .poly.Polynomial({= coefficients=LinalgZeros(index).Push(1),order=:ascending,variable=frame[:metadata][:variable] });
+};
+LinalgPolynomialSparseRealize(adapter,polynomial,frameValue) -> {;
+    frame=frameValue==_ ?: adapter[:frame] ?_ LinalgRequireFrame(frameValue);
+    LinalgSameFrame(frame,adapter[:frame]) ?_> .Error("Countable polynomial realization requires its monomial Frame");
+    limits=frame[:metadata][:budgets];polynomial.Degree()<=limits[:maxindex] ?_> .Error("Polynomial degree exceeds the finite-support index budget");
+    terms=polynomial.AscendingCoefficients().Map((coefficient,index)->{= indices=[index-1],value=coefficient }).Filter((term)->term[:value]!=0);
+    vector=LinalgVector(LinalgSparseCoordinates(terms,[:countable],limits),frame);vector[:viewof]=polynomial;vector.viewOf=polynomial;
+    LinalgRealizationValue(adapter,polynomial,vector);
+};
+LinalgPolynomialSparseReconstruct(adapter,storage) -> {;
+    storage[:shape].Len()==1 && storage[:shape][1]==:countable ?_> .Error("Polynomial reconstruction requires one countable monomial axis");
+    degree=storage.SupportSize()==0 ?: 0 ?_ storage[:terms].Last()[:indices][1];
+    degree<=adapter[:frame][:metadata][:budgets][:maxindex] ?_> .Error("Polynomial reconstruction index budget exceeded");
+    coefficients:=LinalgZeros(degree+1);
+    {@ term=1;term<=@storage.SupportSize();{; item=@storage[:terms][term];@coefficients ~= @coefficients.Set(item[:indices][1]+1,item[:value]); };term+=1 };
+    .poly.Polynomial({= coefficients=coefficients,order=:ascending,variable=adapter[:variable] });
+};
+LinalgPolynomialBounded(adapter,degreeValue) -> {;
+    adapter[:maxdegree]==:unbounded ?_> .Error("Bounded requires a countable PolynomialSpace");
+    degree=LinalgGraphInteger(degreeValue,0,255,"Bounded polynomial degree");
+    ordinary=LinalgPolynomialSpace(degree,adapter[:variable]);
+    LinalgPolynomialSpaceValue(ordinary[:space],ordinary[:frame],degree,adapter[:variable],adapter);
+};
+LinalgPolynomialInclude(adapter,realization) -> {;
+    adapter[:maxdegree]==:unbounded ?_> .Error("Include requires the countable ambient PolynomialSpace");
+    ((realization ? :Map) && realization[:schema]=="rix.linalg.linear-realization@1") ?_> .Error("Include requires a bounded polynomial realization");
+    source=realization[:realization];
+    source[:maxdegree]!=:unbounded && source[:ambient]!=_ && source[:ambient][:identitytoken]==adapter[:identitytoken]
+      ?_> .Error("Polynomial inclusion requires a Bounded subspace of this ambient PolynomialSpace");
+    polynomial=realization[:domain];reconstructed=LinalgPolynomialReconstruct(source,realization[:vector]);
+    (polynomial==reconstructed)==1 ?_> .Error("Polynomial inclusion source coordinates do not reconstruct their domain");
+    LinalgPolynomialRealize(adapter,polynomial);
+};
+LinalgPolynomialProjectionRecord(variable,degree,source,kept,discarded) -> {=
+    schema="rix.linalg.polynomial-projection@1",kind=:degreeProjection,field=:Rational,variable=variable,maxDegree=degree,
+    source=source.AscendingCoefficients(),kept=kept.AscendingCoefficients(),discarded=discarded.AscendingCoefficients()
+};
+LinalgPolynomialProject(adapter,realization) -> {;
+    adapter[:maxdegree]!=:unbounded && adapter[:ambient]!=_ ?_> .Error("Project requires a Bounded subspace of a countable PolynomialSpace");
+    ((realization ? :Map) && realization[:schema]=="rix.linalg.linear-realization@1") ?_> .Error("Project requires a countable polynomial realization");
+    realization[:realization][:identitytoken]==adapter[:ambient][:identitytoken] ?_> .Error("Polynomial projection requires this bounded subspace's ambient realization");
+    source=realization[:domain];reconstructed=LinalgPolynomialReconstruct(adapter[:ambient],realization[:vector]);
+    (source==reconstructed)==1 ?_> .Error("Polynomial projection source coordinates do not reconstruct their domain");
+    coefficients=source.AscendingCoefficients();degree=adapter[:maxdegree];
+    kept=.poly.Polynomial({= coefficients=coefficients.Slice(1,degree+2),order=:ascending,variable=adapter[:variable] });
+    discarded=source-kept;record=LinalgPolynomialProjectionRecord(adapter[:variable],degree,source,kept,discarded);
+    LinalgVerifyProjection(record);
+    result={= schema="rix.linalg.polynomial-projection-result@1",source=realization,projection=LinalgPolynomialRealize(adapter,kept),discarded=discarded,verified=1,exactInclusion=discarded.AscendingCoefficients().All((entry)->entry==0) };
+    result._proto={= Record=(self)->record,Verify=(self)->LinalgVerifyProjection(record),Realization=(self)->self[:projection],Vector=(self)->self[:projection].Vector(),Remainder=(self)->self[:discarded] };
+    .ImmutableValue(result);
+};
+LinalgVerifyProjection(recordValue) -> {;
+    record=.MathDecodeJSON(.MathEncodeJSON(recordValue));
+    LinalgGraphKeys(record,["schema","kind","field","variable","maxdegree","source","kept","discarded"]);
+    record[:schema]=="rix.linalg.polynomial-projection@1" && record[:kind]==:degreeProjection && record[:field]==:Rational ?_> .Error("Unsupported polynomial projection record");
+    variable=LinalgGraphVariable(record[:variable]);degree=LinalgGraphInteger(record[:maxdegree],0,255,"Projection degree bound");
+    lists=[record[:source],record[:kept],record[:discarded]];
+    lists.All((items)->(items ? :Array) && items.Len()>=1 && items.Len()<=65537) ?_> .Error("Projection coefficients exceed finite work bounds");
+    lists.All((items)->items.All((entry)->(entry ? :Integer)||(entry ? :Rational))) ?_> .Error("Projection coefficients must be exact Rational scalars");
+    polynomials=lists.Map((items)->.poly.Polynomial({= coefficients=items,order=:ascending,variable=variable }));
+    source=polynomials[1];kept=polynomials[2];discarded=polynomials[3];
+    kept.Degree()<=degree && discarded.AscendingCoefficients().Slice(1,degree+2).All((entry)->entry==0) && (source==kept+discarded)==1
+      ?_> .Error("Polynomial projection evidence does not reproduce");1;
+};
+
+LinalgSparseAxis(storage,axis,matrix) -> {;
+    sourceExtent=storage[:shape][axis];sourceExtent!=:countable ?_> .Error("Countable axes have no finite matrix action");
+    matrix[1].Len()==sourceExtent ?_> .Error("Sparse matrix action input dimension mismatch");extent=matrix.Len();
+    storage.SupportSize()*extent<=storage[:budgets][:maxwork] ?_> .Error("Sparse matrix-action work budget exceeded");terms:=[];
+    {@ term=1;term<=@storage.SupportSize();{;
+        item=@storage[:terms][term];
+        {@ row=1;row<=@extent;{;
+            coefficient=@item[:value]*@matrix[row][@item[:indices][@axis]];
+            coefficient!=0 ?: {; @terms ~= @terms.Push({= indices=@item[:indices].Set(@axis,@row),value=@coefficient }); } ?_ _;
+        };row+=1 };
+    };term+=1 };LinalgSparseCoordinates(terms,storage[:shape].Set(axis,extent),storage[:budgets]);
+};
+LinalgSparseSymmetry(tensor,axes,choices,antisymmetric) -> {;
+    storage=tensor[:components];rank=tensor[:slots].Len();first=tensor[:slots][axes[1]];
+    choices.Len()*(storage.SupportSize()+1)^2*rank<=storage[:budgets][:maxwork] ?_> .Error("Sparse symmetry work budget exceeded");
+    frames=tensor[:slots].Map((slot,index)->axes.Any((axis)->axis==index) ?: first[:frame] ?_ slot[:frame]);
+    aligned=LinalgTransformed(tensor,frames)[:components];total:=[LinalgSparseCoordinates([],storage[:shape],storage[:budgets])];
+    {@ choice=1;choice<=@choices.Len();{;
+        order:=LinalgZeros(@rank).Map((unused,index)->index);selected=@choices[choice];inversions:=0;
+        {@ position=1;position<=@axes.Len();{;
+            @order ~= @order.Set(@axes[position],@selected[position]);
+            {@ later=@position+1;later<=@axes.Len();{; @axes.IndexOf(@selected[@position])>@axes.IndexOf(@selected[later]) ?: {; @inversions+=1; } ?_ _; };later+=1 };
+        };position+=1 };
+        sign=(@antisymmetric && inversions%2==1) ?: -1 ?_ 1;
+        @total ~= [LinalgSparseAdd(@total[1],LinalgSparseScale(LinalgSparsePermute(@aligned,order),sign))];
+    };choice+=1 };
+    common={= components=LinalgSparseScale(total[1],1/choices.Len()),slots=tensor[:slots].Map((slot,index)->LinalgSlot(frames[index],slot[:dual])) };
+    final=LinalgTransformed(common,tensor[:slots].Map((slot)->slot[:frame]))[:components];
+    LinalgTensorValue(final,tensor[:slots],{= derivedFrom=[tensor],transform={= kind=antisymmetric ?: :antisymmetrize ?_ :symmetrize,axes=axes,terms=choices.Len() } });
+};
+
+### Closed, bounded, data-only identity graph. IDs below are document-local.
+LinalgGraphLimits(options) -> {;
+    maxNodes=LinalgPositiveInteger(LinalgOption(options,"maxnodes",512),"Graph node budget");
+    maxComponents=LinalgPositiveInteger(LinalgOption(options,"maxcomponents",65536),"Graph component budget");
+    maxDepth=LinalgPositiveInteger(LinalgOption(options,"maxdepth",64),"Graph depth budget");
+    maxReplayWork=LinalgPositiveInteger(LinalgOption(options,"maxreplaywork",1048576),"Graph replay work budget");
+    maxNodes<=1024 && maxComponents<=262144 && maxDepth<=128 && maxReplayWork<=16777216 ?_> .Error("Linear graph budget exceeds the supported hard bounds");
+    {= maxNodes=maxNodes,maxComponents=maxComponents,maxDepth=maxDepth,maxReplayWork=maxReplayWork };
+};
+LinalgGraphKind(value) ->
+    LinalgSpaceIs(value) ?: :vectorSpace
+    ?_ LinalgFrameIs(value) ?: :frame
+    ?_ LinalgTensorIs(value) ?: :tensorRepresentation
+    ?_ LinalgLinearMapIs(value) ?: :linearMap
+    ?_ LinalgMetricIs(value) ?: :metric
+    ?_ (value ? :Polynomial) ?: :polynomial
+    ?_ ((value ? :Map) && value[:schema]=="rix.linalg.polynomial-space@1") ?: :polynomialSpace
+    ?_ ((value ? :Map) && value[:schema]=="rix.linalg.linear-realization@1") ?: :linearRealization
+    ?_ ((value ? :Map) && value[:valuekind]==:tensorIdentity) ?: :tensorIdentity
+    ?_ .Error("Linear graph roots must be spaces, Frames, tensors, maps, metrics, Polynomials or finite realizations");
+LinalgGraphToken(value,kind) -> kind==:polynomial ?: value.sourceIdentity
+    ?_ kind==:tensorRepresentation ?: value[:representationtoken]
+    ?_ kind==:tensorIdentity ?: value[:token] ?_ value[:identitytoken];
+LinalgGraphRef(state,value) -> {;
+    value!=_ ?_> _;
+    kind=LinalgGraphKind(value); token=LinalgGraphToken(value,kind);
+    countable=(kind==:vectorSpace && value[:dimension]==:countable)
+      || (kind==:frame && value[:space][:dimension]==:countable)
+      || (kind==:polynomialSpace && value[:maxdegree]==:unbounded);
+    !countable ?_> .Error("Identity graph v1 requires finite spaces and Frames; countable monomial identities cannot be exported");
+    token!=_ ?_> .Error("Linear graph value is missing its runtime identity token");
+    found=state[:nodes].Filter((node)->node[:kind]==kind && node[:token]==token);
+    found.Len()==0 ?_> found[1][:id];
+    state[:nodes].Len()<state[:limits][:maxnodes] ?_> .Error("Linear graph node budget exceeded");
+    id=state[:nodes].Len()+1;
+    node={= id=id,kind=kind,token=token }; node.value=value;
+    state[:nodes]=state[:nodes].Push(node);
+    id;
+};
+LinalgGraphStorage(state,value) -> {;
+    storage=LinalgCoordinateStorage(value);
+    !LinalgSparseIs(storage) ?_> .Error("Identity graph v1 requires finite dense coordinates; use sparse Record/RestoreCoordinates or materialize a finite tensor first");
+    entries=storage.Entries();
+    state[:components]+=entries.Len();
+    state[:components]<=state[:limits][:maxcomponents] ?_> .Error("Linear graph component budget exceeded");
+    {= schema="rix.coordinate-storage@1",kind=:denseShaped,scalarField="rix.scalar-field.rational@1",shape=storage.Shape().ToArray(),data=entries };
+};
+LinalgGraphTransform(state,value) -> {;
+    value!=_ ?_> _;
+    {= kind=value[:kind],
+       sources=value[:sources]==_ ?: [] ?_ value[:sources].Map((frame)->LinalgGraphRef(state,frame)),
+       targets=value[:targets]==_ ?: [] ?_ value[:targets].Map((frame)->LinalgGraphRef(state,frame)),
+       matrices=value[:matrices]==_ ?: [] ?_ value[:matrices].Map((matrix)->LinalgGraphStorage(state,matrix)),
+       order=value[:order],axis=value[:axis],axes=value[:axes],terms=value[:terms],metricId=LinalgGraphRef(state,value[:metric]) };
+};
+LinalgGraphRecord(state,node) -> {;
+    value=node.value; kind=node[:kind]; id=node[:id];
+    {? kind==:tensorIdentity ? {=
+           schema="rix.linalg.identity-record@1",valueKind=:linalgIdentityRecord,kind=kind,id=id,
+           lineageLimit=value[:lineagelimit],origin=LinalgGraphRef(state,value[:origin]),
+           representations=value[:representations].Map((item)->LinalgGraphRef(state,item))
+       };
+       kind==:polynomial ? {=
+           schema="rix.linalg.identity-record@1",valueKind=:linalgIdentityRecord,kind=kind,id=id,
+           variable=value.Variable(),coefficients=value.AscendingCoefficients(),degreeBound=value.degreeBound,
+           capturedReactive=value.reactive==1 ?: 1 ?_ _
+       };
+       kind==:vectorSpace ? LinalgSerialize(value).Merge({=
+           id=id,dualOf=LinalgGraphRef(state,value.primalSpace),
+           definingFrameId=LinalgGraphRef(state,value.definingFrame),lineageLimit=value[:lineagelimit]
+       });
+       kind==:frame ? LinalgSerialize(value).Merge({=
+           id=id,spaceId=LinalgGraphRef(state,value.space),
+           basis=LinalgGraphStorage(state,value[:basis]),localBasis=LinalgGraphStorage(state,value[:localbasis]),
+           relativeToId=LinalgGraphRef(state,value[:relativeto]),primalFrameId=LinalgGraphRef(state,value[:primalframe]),
+           dualBasis=value[:dualbasis]==_ ?: _ ?_ LinalgGraphStorage(state,value[:dualbasis]),
+           canonicalDual=value[:canonicaldual],metadata=value[:metadata]
+       });
+       kind==:tensorRepresentation ? LinalgSerialize(value).Merge({=
+           id=id,representationId=id,tensorId=LinalgGraphRef(state,value.identity),
+           components=LinalgGraphStorage(state,value[:components]),
+           slots=value[:slots].Map((slot)->{= spaceId=LinalgGraphRef(state,slot.frame.space),frameId=LinalgGraphRef(state,slot.frame),dual=slot[:dual] }),
+           equivalentTo=LinalgGraphRef(state,value[:equivalentto]),viewOf=LinalgGraphRef(state,value[:viewof]),
+           derivedFrom=value[:derivedfrom].Map((item)->LinalgGraphRef(state,item)),
+           transform=LinalgGraphTransform(state,value[:transform])
+       });
+       kind==:linearMap ? LinalgSerialize(value).Merge({=
+           id=id,domainId=LinalgGraphRef(state,value[:sourceframe].space),codomainId=LinalgGraphRef(state,value[:targetframe].space),
+           sourceFrameId=LinalgGraphRef(state,value[:sourceframe]),targetFrameId=LinalgGraphRef(state,value[:targetframe]),
+           matrix=LinalgGraphStorage(state,value[:matrix]),provenance=value[:provenance]
+       });
+       kind==:metric ? LinalgSerialize(value).Merge({=
+           id=id,spaceId=LinalgGraphRef(state,value[:frame].space),frameId=LinalgGraphRef(state,value[:frame]),
+           components=LinalgGraphStorage(state,value[:components])
+       });
+       kind==:polynomialSpace ? LinalgSerialize(value).Merge({=
+           id=id,spaceId=LinalgGraphRef(state,value[:frame].space),frameId=LinalgGraphRef(state,value[:frame])
+       });
+       kind==:linearRealization ? LinalgGraphRealizationRecord(state,value,id);
+    };
+};
+LinalgGraphRealizationRecord(state,value,id) -> {;
+    (LinalgPolynomialReconstruct(value[:realization],value[:vector])==value[:domain])==1
+      ?_> .Error("Linear realization snapshot is stale; realize its current Polynomial source before exporting");
+    LinalgSerialize(value).Omit(["vector"]).Merge({=
+           id=id,adapterId=LinalgGraphRef(state,value[:realization]),sourceId=LinalgGraphRef(state,value[:domain]),
+           vectorId=LinalgGraphRef(state,value[:vector])
+    });
+};
+LinalgExportGraph(values,options ?= {= }) -> {;
+    roots=values ? :Array ?: values ?_ [values];
+    limits=LinalgGraphLimits(options);
+    state={= nodes=[],limits=limits,components=0 };state._mutable=1;
+    references=roots.Map((value)->LinalgGraphRef(state,value)); records:=[];
+    {@ index=1; index<=@state[:nodes].Len(); {;
+        @records ~= @records.Push(LinalgGraphRecord(@state,@state[:nodes][index]));
+    }; index+=1 };
+    graph={= schema="rix.linalg.identity-graph@1",scalarField="rix.scalar-field.rational@1",roots=references,records=records.Map((record)->LinalgGraphCompleteSpace(record,records)) };
+    ### Materializing tagged data strips live extension methods and rejects callable payloads.
+    inert=.MathDecodeJSON(.MathEncodeJSON(graph));
+    LinalgGraphValidate(inert,limits);
+    .ImmutableValue(inert);
+};
+
+LinalgGraphCompleteSpace(record,records) -> {;
+    record[:kind]==:vectorSpace ?_> record;
+    frames=records.Filter((other)->other[:kind]==:frame && other[:spaceid]==record[:id] && other[:defining]!=_);
+    frames.Len()<=1 ?_> .Error("Linear graph contains conflicting defining Frames");
+    record.Merge({= definingFrameId=frames.Len()==0 ?: record[:definingframeid] ?_ frames[1][:id] });
+};
+
+LinalgGraphKeys(value,keys) -> {;
+    value ? :Map ?_> .Error("Linear graph records must be Maps");
+    value.Keys().Len()==keys.Len() && keys.All((key)->value.Has(key))
+      ?_> .Error(@"Linear graph record has missing or unexpected fields: expected @{keys}, received @{value.Keys()}");
+    value;
+};
+LinalgGraphArray(value,label) -> {;
+    value ? :Array ?_> .Error(@"Linear graph @{label} must be an Array"); value;
+};
+LinalgGraphInteger(value,low,high,label) -> {;
+    (value ? :Integer) && value>=low && value<=high ?_> .Error(@"Invalid linear graph @{label}"); value;
+};
+LinalgGraphBool(value,label) -> {;
+    (value==_ || ((value ? :Integer) && value==1)) ?_> .Error(@"Invalid linear graph @{label} flag"); value;
+};
+LinalgGraphAt(state,id,kinds ?= _) -> {;
+    LinalgGraphInteger(id,1,state[:records].Len(),"reference"); record=state[:records][id];
+    (kinds==_ || kinds.Includes(record[:kind])) ?_> .Error("Linear graph reference has an incompatible record kind");
+    record;
+};
+LinalgGraphOptional(state,id,kinds) -> id==_ ?: _ ?_ LinalgGraphAt(state,id,kinds);
+LinalgGraphCoordinateKey(id,field) -> @"@{id}:@{field}";
+LinalgGraphCoordinates(state,id,field) -> state[:storage][LinalgGraphCoordinateKey(id,field)];
+LinalgGraphValidateStorage(state,id,field,value) -> {;
+    LinalgGraphKeys(value,["schema","kind","scalarfield","shape","data"]);
+    value[:schema]=="rix.coordinate-storage@1" && value[:kind]==:denseShaped && value[:scalarfield]=="rix.scalar-field.rational@1"
+      ?_> .Error("Linear graph requires the finite Rational coordinate-storage protocol");
+    shape=LinalgGraphArray(value[:shape],"shape"); data=LinalgGraphArray(value[:data],"coordinate data");
+    shape.Len()>=1 && shape.Len()<=32 ?_> .Error("Linear graph coordinate rank must be one through 32");
+    shape=shape.Map((dimension)->LinalgGraphInteger(dimension,1,256,"axis dimension"));
+    size:=1; {@ axis=1;axis<=@shape.Len();{; @size *= @shape[axis]; };axis+=1 };
+    size==data.Len() ?_> .Error("Linear graph coordinate shape and component count conflict");
+    state[:components]+=size;
+    state[:components]<=state[:limits][:maxcomponents] ?_> .Error("Linear graph component budget exceeded");
+    exact=data.Map((entry)->LinalgExact(entry,"Linear graph component"));
+    storage=LinalgShapedFromFlat(exact,shape);
+    state[:storage][LinalgGraphCoordinateKey(id,field)]=storage;
+    storage;
+};
+LinalgGraphMatrix(state,id,field,value,rows,columns) -> {;
+    storage=LinalgGraphValidateStorage(state,id,field,value); shape=storage.Shape();
+    shape.Len()==2 && shape[1]==rows && shape[2]==columns ?_> .Error("Linear graph matrix dimensions conflict with its spaces");
+    storage;
+};
+LinalgGraphVariable(value) -> {;
+    variable=.ExpressionVariableSelector(_,value);
+    (!(variable ? :String) || (variable.Len()>=1 && variable.Len()<=256)) ?_> .Error("Linear graph variable name is empty or excessive");
+    variable;
+};
+LinalgGraphValidateSpace(state,record) -> {;
+    LinalgGraphKeys(record,["schema","valuekind","kind","id","name","dimension","over","dualof","metadata","definingframeid","lineagelimit"]);
+    LinalgGraphInteger(record[:dimension],1,256,"space dimension");
+    LinalgGraphInteger(record[:lineagelimit],1,1024,"lineage limit");
+    record[:over]==:Rational ?_> .Error("Linear graph space must use the Rational scalar field");
+    (record[:name] ? :String) && record[:name].Len()<=1024 ?_> .Error("Invalid linear graph space name");
+    defining=LinalgGraphOptional(state,record[:definingframeid],[:frame]);
+    (defining==_ || (defining[:spaceid]==record[:id] && defining[:defining]==1)) ?_> .Error("Linear graph defining Frame conflicts with its space");
+    primal=LinalgGraphOptional(state,record[:dualof],[:vectorSpace]);
+    (primal==_ || (primal[:dimension]==record[:dimension] && primal[:over]==record[:over])) ?_> .Error("Linear graph dual space has a conflicting dimension or domain");
+    (primal==_ || state[:records].Filter((other)->other[:kind]==:vectorSpace && other[:dualof]==record[:dualof]).Len()==1)
+      ?_> .Error("Linear graph declares conflicting canonical dual spaces");
+    record;
+};
+LinalgGraphValidateFrame(state,record) -> {;
+    LinalgGraphKeys(record,["schema","valuekind","kind","id","spaceid","name","basis","defining","dualframe","primalframeid","dualbasis","localbasis","relativetoid","canonicaldual","metadata"]);
+    space=LinalgGraphAt(state,record[:spaceid],[:vectorSpace]); dimension=space[:dimension];
+    LinalgGraphBool(record[:defining],"defining Frame"); LinalgGraphBool(record[:dualframe],"dual Frame"); LinalgGraphBool(record[:canonicaldual],"canonical dual Frame");
+    (record[:name] ? :String) && record[:name].Len()<=1024 ?_> .Error("Invalid linear graph Frame name");
+    basis=LinalgGraphMatrix(state,record[:id],"basis",record[:basis],dimension,dimension);
+    local=LinalgGraphMatrix(state,record[:id],"localbasis",record[:localbasis],dimension,dimension);
+    LinalgInverseRows(LinalgMatrixRows(basis));
+    relative=LinalgGraphOptional(state,record[:relativetoid],[:frame]);
+    (record[:defining]!=_ ?: (relative==_ && space[:definingframeid]==record[:id] && LinalgRowsEqual(LinalgMatrixRows(basis),LinalgIdentityRows(dimension)) && local==basis)
+      ?_ (relative!=_ && relative[:spaceid]==record[:spaceid])) ?_> .Error("Linear graph Frame basis declaration is inconsistent");
+    primal=LinalgGraphOptional(state,record[:primalframeid],[:frame]);
+    (record[:dualframe]!=_ ?: (primal!=_ && primal[:spaceid]==record[:spaceid] && primal[:dualframe]==_ && record[:defining]==_)
+      ?_ (primal==_ && record[:dualbasis]==_ && record[:canonicaldual]==_)) ?_> .Error("Linear graph dual Frame has an invalid primal companion");
+    record[:dualframe]!=_ ?: LinalgGraphMatrix(state,record[:id],"dualbasis",record[:dualbasis],dimension,dimension) ?_ _;
+    (record[:canonicaldual]==_ || state[:records].Filter((other)->other[:kind]==:frame && other[:canonicaldual]!=_ && other[:primalframeid]==record[:primalframeid]).Len()==1)
+      ?_> .Error("Linear graph declares conflicting canonical dual Frames");
+    record;
+};
+LinalgGraphValidateIdentity(state,record) -> {;
+    LinalgGraphKeys(record,["schema","valuekind","kind","id","lineagelimit","origin","representations"]);
+    limit=LinalgGraphInteger(record[:lineagelimit],1,1024,"lineage limit");
+    reps=LinalgGraphArray(record[:representations],"representation history");
+    reps.Len()>=1 && reps.Len()<=limit+1 && reps[1]==record[:origin] ?_> .Error("Linear graph lineage must retain its origin within the configured bound");
+    origin=LinalgGraphAt(state,record[:origin],[:tensorRepresentation]);
+    origin[:tensorid]==record[:id] ?_> .Error("Linear graph origin belongs to a different tensor identity");
+    origin[:equivalentto]==_ ?_> .Error("Linear graph origin cannot have a preceding equivalent representation");
+    reps.All((id)->LinalgGraphAt(state,id,[:tensorRepresentation])[:tensorid]==record[:id] && reps.Filter((other)->other==id).Len()==1)
+      ?_> .Error("Linear graph lineage contains duplicate or foreign representations");
+    record;
+};
+LinalgGraphValidateTransform(state,id,value) -> {;
+    value!=_ ?_> _;
+    LinalgGraphKeys(value,["kind","sources","targets","matrices","order","axis","axes","terms","metricid"]);
+    [:coordinateChange,:fullExtentView,:slotPermutation,:lower,:raise,:symmetrize,:antisymmetrize,:tensorProduct,:contraction].Includes(value[:kind])
+      ?_> .Error("Linear graph has an unsupported transformation provenance kind");
+    _ := LinalgGraphArray(value[:sources],"source Frames").Map((ref)->LinalgGraphAt(state,ref,[:frame]));
+    _ := LinalgGraphArray(value[:targets],"target Frames").Map((ref)->LinalgGraphAt(state,ref,[:frame]));
+    _ := LinalgGraphArray(value[:matrices],"transformation matrices").Map((matrix,index)->LinalgGraphValidateStorage(state,id,@"transform-@{index}",matrix));
+    LinalgGraphOptional(state,value[:metricid],[:metric]); value;
+};
+LinalgGraphValidateTensor(state,record) -> {;
+    LinalgGraphKeys(record,["schema","valuekind","kind","id","tensorid","representationid","type","components","slots","equivalentto","viewof","derivedfrom","transform"]);
+    record[:representationid]==record[:id] ?_> .Error("Linear graph representation ID is inconsistent");
+    identity=LinalgGraphAt(state,record[:tensorid],[:tensorIdentity]);
+    components=LinalgGraphValidateStorage(state,record[:id],"components",record[:components]);
+    slots=LinalgGraphArray(record[:slots],"slots"); slots.Len()==components.Shape().Len() ?_> .Error("Linear graph tensor rank and slots conflict");
+    _ := slots.Map((slot,axis)->LinalgGraphValidateSlot(state,slot,components.Shape()[axis]));
+    expected=slots.Len()==1 ?: (slots[1][:dual]!=_ ?: "Covector" ?_ "Vector") ?_ "Tensor";
+    record[:type]==expected ?_> .Error("Linear graph tensor semantic type conflicts with its variance");
+    equivalent=LinalgGraphOptional(state,record[:equivalentto],[:tensorRepresentation]);
+    (equivalent==_ || equivalent[:tensorid]==record[:tensorid]) ?_> .Error("Linear graph equivalence links cross tensor identities");
+    LinalgGraphOptional(state,record[:viewof],[:tensorRepresentation,:polynomial]);
+    _ := LinalgGraphArray(record[:derivedfrom],"derivation references").Map((ref)->LinalgGraphAt(state,ref,[:tensorRepresentation]));
+    identity[:lineagelimit]<=slots.Map((slot)->LinalgGraphAt(state,slot[:spaceid],[:vectorSpace])[:lineagelimit]).Sort()[1]
+      ?_> .Error("Linear graph lineage exceeds the slot-space retention limit");
+    LinalgGraphValidateTransform(state,record[:id],record[:transform]); record;
+};
+LinalgGraphValidateSlot(state,slot,dimension) -> {;
+    LinalgGraphKeys(slot,["spaceid","frameid","dual"]); LinalgGraphBool(slot[:dual],"slot variance");
+    space=LinalgGraphAt(state,slot[:spaceid],[:vectorSpace]); frame=LinalgGraphAt(state,slot[:frameid],[:frame]);
+    frame[:spaceid]==space[:id] && space[:dimension]==dimension ?_> .Error("Linear graph tensor slot has conflicting space, Frame or dimension"); slot;
+};
+LinalgGraphValidateMap(state,record) -> {;
+    LinalgGraphKeys(record,["schema","valuekind","kind","id","name","domainid","codomainid","sourceframeid","targetframeid","matrix","provenance"]);
+    (record[:name] ? :String) && record[:name].Len()<=1024 ?_> .Error("Invalid linear graph map name");
+    domain=LinalgGraphAt(state,record[:domainid],[:vectorSpace]); codomain=LinalgGraphAt(state,record[:codomainid],[:vectorSpace]);
+    source=LinalgGraphAt(state,record[:sourceframeid],[:frame]); target=LinalgGraphAt(state,record[:targetframeid],[:frame]);
+    source[:spaceid]==domain[:id] && target[:spaceid]==codomain[:id] && source[:dualframe]==_ && target[:dualframe]==_
+      ?_> .Error("Linear graph map Frames conflict with its domain or codomain");
+    LinalgGraphMatrix(state,record[:id],"matrix",record[:matrix],codomain[:dimension],domain[:dimension]); record;
+};
+LinalgGraphValidateMetric(state,record) -> {;
+    LinalgGraphKeys(record,["schema","valuekind","kind","id","spaceid","frameid","components","positivedefinite","metadata"]);
+    space=LinalgGraphAt(state,record[:spaceid],[:vectorSpace]); frame=LinalgGraphAt(state,record[:frameid],[:frame]);
+    frame[:spaceid]==space[:id] && frame[:dualframe]==_ ?_> .Error("Linear graph metric Frame conflicts with its space");
+    LinalgGraphBool(record[:positivedefinite],"metric definiteness");
+    LinalgGraphMatrix(state,record[:id],"components",record[:components],space[:dimension],space[:dimension]); record;
+};
+LinalgGraphValidatePolynomial(state,record) -> {;
+    LinalgGraphKeys(record,["schema","valuekind","kind","id","variable","coefficients","degreebound","capturedreactive"]);
+    LinalgGraphVariable(record[:variable]); LinalgGraphBool(record[:capturedreactive],"captured reactivity");
+    coefficients=LinalgGraphArray(record[:coefficients],"Polynomial coefficients");
+    coefficients.Len()>=1 && coefficients.Len()<=256 ?_> .Error("Linear graph Polynomial coefficient budget exceeded");
+    state[:components]+=coefficients.Len();
+    state[:components]<=state[:limits][:maxcomponents] ?_> .Error("Linear graph component budget exceeded");
+    _ := coefficients.Map((entry)->LinalgExact(entry,"Polynomial coefficient"));
+    (coefficients.Len()==1 || coefficients.Last()!=0) ?_> .Error("Linear graph Polynomial coefficients must be canonical ascending coefficients");
+    LinalgGraphInteger(record[:degreebound],0,255,"Polynomial degree bound");
+    record[:degreebound]>=coefficients.Len()-1 ?_> .Error("Linear graph Polynomial degree bound conflicts with its coefficients"); record;
+};
+LinalgGraphValidatePolynomialSpace(state,record) -> {;
+    LinalgGraphKeys(record,["schema","valuekind","kind","id","adapter","spaceid","frameid","maxdegree","variable"]);
+    record[:adapter]=="rix.linalg.polynomial-space@1" ?_> .Error("Unsupported linear graph realization adapter");
+    LinalgGraphVariable(record[:variable]); LinalgGraphInteger(record[:maxdegree],0,255,"PolynomialSpace degree bound");
+    space=LinalgGraphAt(state,record[:spaceid],[:vectorSpace]); frame=LinalgGraphAt(state,record[:frameid],[:frame]);
+    space[:dimension]==record[:maxdegree]+1 && frame[:spaceid]==space[:id] && frame[:defining]==1 && frame[:dualframe]==_
+      ?_> .Error("Linear graph PolynomialSpace requires its matching finite monomial Frame"); record;
+};
+LinalgGraphValidateRealization(state,record) -> {;
+    LinalgGraphKeys(record,["schema","valuekind","kind","id","adapter","domaintype","exact","adapterid","sourceid","vectorid"]);
+    record[:adapter]=="rix.linalg.polynomial-space@1" && record[:domaintype]=="Polynomial" && record[:exact]==1
+      ?_> .Error("Linear graph realization has an unsupported source domain");
+    adapter=LinalgGraphAt(state,record[:adapterid],[:polynomialSpace]); source=LinalgGraphAt(state,record[:sourceid],[:polynomial]);
+    vector=LinalgGraphAt(state,record[:vectorid],[:tensorRepresentation]);
+    vector[:type]=="Vector" && vector[:slots][1][:spaceid]==adapter[:spaceid] && LinalgPolynomialVariableEqual(source[:variable],adapter[:variable])
+      ?_> .Error("Linear graph realization source, variable or ambient space conflicts"); record;
+};
+LinalgGraphEdges(record) -> {;
+    kind=record[:kind];
+    edges=kind==:vectorSpace ?: [record[:dualof]]
+      ?_ kind==:frame ?: [record[:relativetoid],record[:primalframeid]]
+      ?_ kind==:tensorRepresentation ?: [record[:equivalentto],record[:viewof]].Concat(record[:derivedfrom])
+      ?_ kind==:linearRealization ?: [record[:adapterid],record[:sourceid],record[:vectorid]] ?_ [];
+    edges.Filter((id)->id!=_);
+};
+LinalgGraphVisit(state,id,depth) -> {;
+    depth<=state[:limits][:maxdepth] ?_> .Error("Linear graph depth budget exceeded");
+    key=@"@{id}"; status=state[:visited][key];
+    status!=1 ?_> .Error("Linear graph contains cyclic lineage or primal/dual Frame dependencies");
+    status!=2 ?_> LinalgGraphKnownDepth(state,key,depth);
+    state[:visited][key]=1;
+    heights=LinalgGraphEdges(state[:records][id]).Map((reference)->LinalgGraphVisit(state,reference,depth+1));
+    height=heights.Len()==0 ?: 1 ?_ heights.Sort().Last()+1;
+    state[:heights][key]=height; state[:visited][key]=2;
+    LinalgGraphKnownDepth(state,key,depth);
+};
+LinalgGraphKnownDepth(state,key,depth) -> {;
+    height=state[:heights][key];
+    depth+height-1<=state[:limits][:maxdepth] ?_> .Error("Linear graph depth budget exceeded"); height;
+};
+LinalgGraphTransformLaw(state,record) -> {;
+    (record[:kind]==:tensorRepresentation && record[:transform]!=_) ?_> _;
+    transform=record[:transform]; kind=transform[:kind]; rank=record[:slots].Len();
+    coordinate=kind==:coordinateChange;
+    count=coordinate ?: rank ?_ 0;
+    transform[:sources].Len()==count && transform[:targets].Len()==count && transform[:matrices].Len()==count
+      ?_> .Error("Linear graph transform Frame and matrix counts are inconsistent");
+    (kind==:slotPermutation ?: LinalgGraphAxisOrder(transform[:order],rank) ?_ transform[:order]==_)
+      ?_> .Error("Linear graph permutation provenance is invalid");
+    (kind==:lower || kind==:raise) ?: LinalgGraphInteger(transform[:axis],1,rank,"metric axis") ?_ _;
+    (kind==:lower || kind==:raise || transform[:axis]==_) ?_> .Error("Unexpected linear graph metric axis");
+    ((kind==:lower || kind==:raise) ?: transform[:metricid]!=_ ?_ transform[:metricid]==_)
+      ?_> .Error("Linear graph metric provenance is invalid");
+    LinalgGraphTransformAxes(state,record);
+    LinalgGraphTransformLineage(state,record);
+    coordinate ?_> 1;
+    _ := record[:slots].Map((slot,axis)->LinalgGraphTransformMatrix(state,record,slot,axis));
+    1;
+};
+LinalgGraphTransformLineage(state,record) -> {;
+    kind=record[:transform][:kind];
+    derived=record[:derivedfrom];
+    (kind==:coordinateChange || kind==:fullExtentView) ?_> LinalgGraphDerivedCount(kind,derived);
+    kind==:fullExtentView ?_> 1;
+    source=LinalgGraphAt(state,record[:viewof],[:tensorRepresentation]);
+    source[:tensorid]==record[:tensorid] && source[:slots].Len()==record[:slots].Len()
+      && source[:slots].All((slot,axis)->slot[:frameid]==record[:slots][axis][:frameid] && slot[:dual]==record[:slots][axis][:dual])
+      ?_> .Error("Linear graph full view must retain its source identity and Frames"); 1;
+};
+LinalgGraphDerivedCount(kind,derived) -> {;
+    count=kind==:tensorProduct ?: 2 ?_ 1;
+    derived.Len()==count ?_> .Error("Linear graph transformation has an invalid derivation lineage"); 1;
+};
+LinalgGraphAxisOrder(order,rank) -> {;
+    LinalgGraphArray(order,"axis permutation");
+    order.Len()==rank && order.All((axis)->(axis ? :Integer) && axis>=1 && axis<=rank && order.Filter((other)->other==axis).Len()==1);
+};
+LinalgGraphTransformAxes(state,record) -> {;
+    transform=record[:transform]; kind=transform[:kind];
+    symmetry=kind==:symmetrize || kind==:antisymmetrize; contraction=kind==:contraction;
+    (symmetry || contraction) ?_> (transform[:axes]==_ && transform[:terms]==_ ?_> .Error("Unexpected linear graph transform axes or term count"));
+    axes=LinalgGraphArray(transform[:axes],"transformation axes");
+    rank=contraction ?: record[:slots].Len()+2 ?_ record[:slots].Len();
+    (contraction ?: axes.Len()==2 ?_ axes.Len()>=1 && axes.Len()<=6)
+      ?_> .Error("Invalid linear graph transformation axes");
+    axes.All((axis)->(axis ? :Integer) && axis>=1 && axis<=rank && axes.Filter((other)->other==axis).Len()==1)
+      ?_> .Error("Invalid linear graph transformation axes");
+    terms:=1; {@ index=1;index<=@axes.Len();{; @terms *= index; };index+=1 };
+    (symmetry ?: transform[:terms]==terms ?_ transform[:terms]==_) ?_> .Error("Invalid linear graph symmetry term count");
+    1;
+};
+LinalgGraphTransformMatrix(state,record,slot,axis) -> {;
+    transform=record[:transform];
+    source=LinalgGraphAt(state,transform[:sources][axis],[:frame]); target=LinalgGraphAt(state,transform[:targets][axis],[:frame]);
+    source[:spaceid]==slot[:spaceid] && target[:id]==slot[:frameid]
+      ?_> .Error("Linear graph transformation Frames conflict with its slots");
+    change=LinalgMultiplyRows(LinalgInverseRows(LinalgMatrixRows(LinalgGraphCoordinates(state,target[:id],"basis"))),
+      LinalgMatrixRows(LinalgGraphCoordinates(state,source[:id],"basis")));
+    applied=slot[:dual] ?: LinalgInverseRows(LinalgTransposeRows(change)) ?_ change;
+    actual=LinalgMatrixRows(LinalgGraphCoordinates(state,record[:id],@"transform-@{axis}"));
+    LinalgRowsEqual(actual,applied) ?_> .Error("Linear graph transformation matrix violates its Frame change law");
+    equivalent=LinalgGraphOptional(state,record[:equivalentto],[:tensorRepresentation]);
+    (equivalent==_ || equivalent[:slots][axis][:frameid]==source[:id])
+      ?_> .Error("Linear graph transformation source conflicts with its preceding representation"); 1;
+};
+LinalgGraphSourceId(state,id) -> {;
+    id!=_ ?_> _;
+    key=@"@{id}";
+    state[:sourceids].Has(key) ?_> LinalgGraphFindSourceId(state,id,key);
+    state[:sourceids][key];
+};
+LinalgGraphFindSourceId(state,id,key) -> {;
+    record=state[:records][id];
+    source=record[:kind]==:polynomial ?: id
+      ?_ record[:kind]==:tensorRepresentation ?: LinalgGraphSourceId(state,record[:viewof]) ?_ _;
+    state[:sourceids][key]=source; source;
+};
+LinalgGraphValidateSource(state,record) -> {;
+    record[:kind]==:tensorRepresentation ?_> _;
+    identity=LinalgGraphAt(state,record[:tensorid],[:tensorIdentity]);
+    LinalgGraphSourceId(state,record[:id])==LinalgGraphSourceId(state,identity[:origin])
+      ?_> .Error("Linear graph equivalent representations disagree about their domain source");
+    transform=record[:transform]; transform!=_ ?_> 1;
+    kind=transform[:kind];
+    kind==:slotPermutation ?: (record[:viewof]==record[:derivedfrom][1] ?_> .Error("Linear graph slot permutation lost its source view")) ?_ _;
+    (kind==:coordinateChange || kind==:fullExtentView || kind==:slotPermutation || record[:viewof]==_)
+      ?_> .Error("Linear graph derived operation claims an unsupported source view");
+    equivalent=LinalgGraphOptional(state,record[:equivalentto],[:tensorRepresentation]);
+    (kind!=:coordinateChange || equivalent==_ || record[:viewof]==equivalent[:viewof])
+      ?_> .Error("Linear graph coordinate change does not preserve its preceding source view"); 1;
+};
+LinalgGraphValidate(graph,limits) -> {;
+    LinalgGraphKeys(graph,["schema","scalarfield","roots","records"]);
+    graph[:schema]=="rix.linalg.identity-graph@1" && graph[:scalarfield]=="rix.scalar-field.rational@1"
+      ?_> .Error("Unsupported linear identity graph or scalar-field version");
+    records=LinalgGraphArray(graph[:records],"records"); roots=LinalgGraphArray(graph[:roots],"roots");
+    records.Len()>=1 && records.Len()<=limits[:maxnodes] && roots.Len()>=1 && roots.Len()<=limits[:maxnodes]
+      ?_> .Error("Linear graph node/root budget exceeded or empty document");
+    _ := records.Map((record,index)->LinalgGraphRecordHeader(record,index));
+    state={= records=records,limits=limits,components=0,storage={= },visited={= },heights={= },sourceids={= } }; state._mutable=1;
+    _ := records.Map((record)->LinalgGraphValidateRecord(state,record));
+    _ := records.Map((record)->LinalgGraphTransformLaw(state,record));
+    _ := roots.Map((id)->LinalgGraphAt(state,id,[:vectorSpace,:frame,:tensorRepresentation,:linearMap,:metric,:polynomialSpace,:polynomial,:linearRealization]));
+    _ := records.Map((record)->LinalgGraphVisit(state,record[:id],1));
+    _ := records.Map((record)->LinalgGraphValidateSource(state,record));
+    state;
+};
+LinalgGraphRecordHeader(record,index) -> {;
+    record ? :Map ?_> .Error("Linear graph record must be a Map");
+    record[:schema]=="rix.linalg.identity-record@1" && record[:valuekind]==:linalgIdentityRecord && (record[:id] ? :Integer) && record[:id]==index
+      ?_> .Error("Linear graph has invalid, duplicate or noncanonical record IDs");
+    [:vectorSpace,:frame,:tensorIdentity,:tensorRepresentation,:linearMap,:metric,:polynomialSpace,:polynomial,:linearRealization].Includes(record[:kind])
+      ?_> .Error("Unknown linear graph record kind"); record;
+};
+LinalgGraphValidateRecord(state,record) -> {;
+    kind=record[:kind];
+    kind==:vectorSpace ?: LinalgGraphValidateSpace(state,record)
+      ?_ kind==:frame ?: LinalgGraphValidateFrame(state,record)
+      ?_ kind==:tensorIdentity ?: LinalgGraphValidateIdentity(state,record)
+      ?_ kind==:tensorRepresentation ?: LinalgGraphValidateTensor(state,record)
+      ?_ kind==:linearMap ?: LinalgGraphValidateMap(state,record)
+      ?_ kind==:metric ?: LinalgGraphValidateMetric(state,record)
+      ?_ kind==:polynomialSpace ?: LinalgGraphValidatePolynomialSpace(state,record)
+      ?_ kind==:polynomial ?: LinalgGraphValidatePolynomial(state,record)
+      ?_ LinalgGraphValidateRealization(state,record);
+};
+
+LinalgGraphBuilt(state,id) -> id==_ ?: _ ?_ state[:values][id].value;
+LinalgGraphStore(state,record,value) -> {;
+    holder={= };holder.value=value;
+    state[:values]=state[:values].Set(record[:id],holder); value;
+};
+LinalgGraphBuildInitial(state,record) -> {;
+    kind=record[:kind];
+    value=kind==:vectorSpace ?: LinalgVectorSpace({= name=record[:name],dimension=record[:dimension],over=:Rational,lineageLimit=record[:lineagelimit],metadata=record[:metadata] })
+      ?_ kind==:polynomial ?: .poly.Polynomial({= coefficients=record[:coefficients],order=:ascending,variable=record[:variable],degreeBound=record[:degreebound] })
+      ?_ kind==:tensorIdentity ?: {= valueKind=:tensorIdentity,token=LinalgNewIdentity(),key=LinalgNextIdentity(:tensor),origin=_,representations=[],lineageLimit=record[:lineagelimit] }
+      ?_ _;
+    value==_ ?: _ ?_ LinalgGraphStore(state,record,value);
+};
+LinalgGraphBuildFrame(state,record) -> {;
+    LinalgGraphBuilt(state,record[:id])==_ ?_> 1;
+    relative=LinalgGraphBuilt(state,record[:relativetoid]); primal=LinalgGraphBuilt(state,record[:primalframeid]);
+    (record[:relativetoid]==_ || relative!=_) && (record[:primalframeid]==_ || primal!=_) ?_> _;
+    space=LinalgGraphBuilt(state,record[:spaceid]);
+    value=LinalgFrame(space,{= name=record[:name],relativeTo=relative,
+        basis=record[:defining]!=_ ?: :defining ?_ LinalgGraphCoordinates(state,record[:id],"localbasis"),metadata=record[:metadata] });
+    LinalgRowsEqual(LinalgMatrixRows(value[:basis]),LinalgMatrixRows(LinalgGraphCoordinates(state,record[:id],"basis")))
+      ?_> .Error("Linear graph absolute and relative Frame bases conflict");
+    LinalgGraphRestoreDualFrame(state,record,value,primal);
+    LinalgGraphStore(state,record,value);
+};
+LinalgGraphRestoreDualFrame(state,record,value,primal) -> {;
+    record[:dualframe]!=_ ?_> value;
+    LinalgRowsEqual(LinalgMatrixRows(value[:basis]),LinalgMatrixRows(primal[:basis])) ?_> .Error("Linear graph dual Frame does not match its primal companion");
+    dualBasis=LinalgGraphCoordinates(state,record[:id],"dualbasis");
+    LinalgRowsEqual(LinalgMatrixRows(dualBasis),LinalgInverseRows(LinalgTransposeRows(LinalgMatrixRows(primal[:basis]))))
+      ?_> .Error("Linear graph dual basis violates the inverse-transpose law");
+    value[:dualframe]=1; value[:primalframe]=primal; value[:dualbasis]=dualBasis ~!: :Matrix; value[:canonicaldual]=record[:canonicaldual];
+    value.dualFrame=1; value.primalFrame=primal; value.dualBasis=value[:dualbasis]; value;
+};
+LinalgGraphBuildFrames(state) -> {;
+    frames=state[:records].Filter((record)->record[:kind]==:frame); remaining:=frames.Len();
+    {@ pass=1; @remaining>0 && pass<=@frames.Len(); {;
+        before:=@remaining; active=@state;
+        _ := @frames.Map((record)->LinalgGraphBuildFrame(active,record));
+        @remaining ~= @frames.Filter((record)->LinalgGraphBuilt(active,record[:id])==_).Len();
+        @remaining<before ?_> .Error("Linear graph contains cyclic or unresolved Frame dependencies");
+    }; pass+=1 };
+    remaining==0 ?_> .Error("Linear graph Frame reconstruction did not complete"); state;
+};
+LinalgGraphBuildAlgebra(state,record) -> {;
+    kind=record[:kind];
+    value=kind==:linearMap ?: LinalgLinearMap(LinalgGraphBuilt(state,record[:domainid]),LinalgGraphBuilt(state,record[:codomainid]),LinalgGraphCoordinates(state,record[:id],"matrix"),{=
+        name=record[:name],sourceFrame=LinalgGraphBuilt(state,record[:sourceframeid]),targetFrame=LinalgGraphBuilt(state,record[:targetframeid]),provenance=record[:provenance] })
+      ?_ kind==:metric ?: LinalgMetric(LinalgGraphBuilt(state,record[:frameid]),LinalgGraphCoordinates(state,record[:id],"components"),{= metadata=record[:metadata] })
+      ?_ kind==:polynomialSpace ?: LinalgPolynomialSpaceValue(LinalgGraphBuilt(state,record[:spaceid]),LinalgGraphBuilt(state,record[:frameid]),record[:maxdegree],record[:variable])
+      ?_ _;
+    (kind!=:metric || value[:positivedefinite]==record[:positivedefinite]) ?_> .Error("Linear graph metric definiteness evidence is incorrect");
+    value==_ ?: _ ?_ LinalgGraphStore(state,record,value);
+};
+LinalgGraphBuildTensor(state,record) -> {;
+    record[:kind]==:tensorRepresentation ?_> _;
+    identity=LinalgGraphBuilt(state,record[:tensorid]);
+    slots=record[:slots].Map((slot)->LinalgSlot(LinalgGraphBuilt(state,slot[:frameid]),slot[:dual]));
+    lineage={= identity=identity,identityKey=identity[:key],deferHistory=1 };lineage.identity=identity;
+    value=LinalgTensorValue(LinalgGraphCoordinates(state,record[:id],"components"),slots,lineage);
+    LinalgGraphStore(state,record,value);
+};
+### Replay typed derivations once per record; untagged links are ancestry only.
+LinalgGraphReplaySource(state,id) -> {;
+    source=LinalgGraphBuilt(state,id);
+    LinalgTensorValue(source[:components],source[:slots]);
+};
+LinalgGraphReplay(state,record) -> {;
+    (record[:kind]==:tensorRepresentation && record[:transform]!=_) ?_> _;
+    transform=record[:transform]; kind=transform[:kind];
+    (kind!=:coordinateChange && kind!=:fullExtentView) ?_> 1;
+    sources=record[:derivedfrom].Map((id)->LinalgGraphBuilt(state,id));
+    target=LinalgGraphBuilt(state,record[:id]);
+    LinalgGraphReplayBudget(state,record,sources,target);
+    left=LinalgGraphReplaySource(state,record[:derivedfrom][1]);
+    result=kind==:tensorProduct ?: LinalgTensorProductValues(left,LinalgGraphReplaySource(state,record[:derivedfrom][2]))
+      ?_ kind==:slotPermutation ?: LinalgPermute(left,transform[:order])
+      ?_ (kind==:lower || kind==:raise) ?: LinalgMetricIndex(left,LinalgGraphBuilt(state,transform[:metricid]),transform[:axis],kind)
+      ?_ kind==:contraction ?: LinalgContract(left,transform[:axes][1],transform[:axes][2])
+      ?_ LinalgSymmetry(left,transform[:axes],kind==:antisymmetrize);
+    LinalgTensorEqual(result,target) ?_> .Error(@"Linear graph @{kind} derivation does not reproduce its declared tensor");
+    1;
+};
+LinalgGraphReplayBudget(state,record,sources,target) -> {;
+    kind=record[:transform][:kind]; first=sources[1]; sourceSize=first[:components].Size(); sourceRank=first[:slots].Len();
+    resultRank=kind==:tensorProduct ?: sourceRank+sources[2][:slots].Len()
+      ?_ kind==:contraction ?: sourceRank-2 ?_ sourceRank;
+    resultRank==target[:slots].Len() ?_> .Error("Linear graph derivation source rank conflicts with its result");
+    expected=kind==:tensorProduct ?: sourceSize*sources[2][:components].Size()
+      ?_ kind==:contraction ?: sourceSize/(first[:components].Shape()[record[:transform][:axes][1]]*first[:components].Shape()[record[:transform][:axes][2]])
+      ?_ sourceSize;
+    expected==target[:components].Size() && expected<=state[:limits][:maxcomponents]
+      ?_> .Error("Linear graph derivation result exceeds its component budget or conflicts with its shape");
+    terms=record[:transform][:terms]==_ ?: 1 ?_ record[:transform][:terms];
+    dimension=first[:components].Shape().ToArray().Concat(target[:components].Shape().ToArray()).Sort().Last();
+    work=terms*(sourceSize*sourceRank*dimension+expected*resultRank*dimension+2*resultRank*dimension^3);
+    state[:replaywork]+=work;
+    state[:replaywork]<=state[:limits][:maxreplaywork] ?_> .Error("Linear graph derivation replay work budget exceeded");
+    1;
+};
+LinalgGraphRestoreTransform(state,id,value) -> {;
+    value!=_ ?_> _;
+    {= kind=value[:kind],sources=value[:sources].Map((ref)->LinalgGraphBuilt(state,ref)),targets=value[:targets].Map((ref)->LinalgGraphBuilt(state,ref)),
+       matrices=value[:matrices].Map((matrix,index)->LinalgGraphCoordinates(state,id,@"transform-@{index}")),
+       order=value[:order],axis=value[:axis],axes=value[:axes],terms=value[:terms],metric=LinalgGraphBuilt(state,value[:metricid]) };
+};
+LinalgGraphRestoreTensorLinks(state,record) -> {;
+    record[:kind]==:tensorRepresentation ?_> _;
+    key=@"@{record[:id]}"; state[:linked][key]!=1 ?_> .Error("Linear graph contains cyclic source links");
+    state[:linked][key]!=2 ?_> LinalgGraphBuilt(state,record[:id]);
+    state[:linked][key]=1;
+    _ := LinalgGraphEdges(record).Map((ref)->LinalgGraphRestoreTensorLinks(state,state[:records][ref]));
+    value=LinalgGraphBuilt(state,record[:id]); identity=LinalgGraphBuilt(state,record[:tensorid]);
+    originRecord=LinalgGraphAt(state,record[:tensorid],[:tensorIdentity]); origin=LinalgGraphBuilt(state,originRecord[:origin]);
+    LinalgTensorEqual(value,origin) ?_> .Error("Linear graph gives inconsistent coordinates to one tensor identity");
+    value[:equivalentto]=LinalgGraphBuilt(state,record[:equivalentto]); value[:viewof]=LinalgGraphBuilt(state,record[:viewof]);
+    value[:derivedfrom]=record[:derivedfrom].Map((ref)->LinalgGraphBuilt(state,ref));
+    value[:transform]=LinalgGraphRestoreTransform(state,record[:id],record[:transform]); value[:origin]=origin;
+    value[:identity]=identity; LinalgSyncTensor(value);value.identity=identity;value.viewOf=value[:viewof];state[:linked][key]=2;value;
+};
+LinalgGraphRestoreHistory(state,record) -> {;
+    record[:kind]==:tensorIdentity ?_> _;
+    identity=LinalgGraphBuilt(state,record[:id]);
+    identity[:origin]=LinalgGraphBuilt(state,record[:origin]); identity[:representations]=record[:representations].Map((ref)->LinalgGraphBuilt(state,ref));
+    _ := state[:records].Filter((other)->other[:kind]==:tensorRepresentation && other[:tensorid]==record[:id])
+      .Map((other)->LinalgGraphAttachIdentity(LinalgGraphBuilt(state,other[:id]),identity)); identity;
+};
+LinalgGraphAttachIdentity(value,identity) -> {;
+    value[:identity]=identity;value.identity=identity;value;
+};
+LinalgGraphBuildRealization(state,record) -> {;
+    record[:kind]==:linearRealization ?_> _;
+    adapter=LinalgGraphBuilt(state,record[:adapterid]); source=LinalgGraphBuilt(state,record[:sourceid]); vector=LinalgGraphBuilt(state,record[:vectorid]);
+    (LinalgPolynomialReconstruct(adapter,vector)==source)==1 ?_> .Error("Linear graph realization coordinates do not reconstruct its Polynomial source");
+    LinalgSameSource(vector,source) ?_> .Error("Linear graph realization has lost its source link");
+    LinalgGraphStore(state,record,LinalgRealizationValue(adapter,source,vector));
+};
+LinalgGraphRestoreSpaceDual(state,record) -> {;
+    (record[:kind]==:vectorSpace && record[:dualof]!=_) ?_> _;
+    value=LinalgGraphBuilt(state,record[:id]); primal=LinalgGraphBuilt(state,record[:dualof]);
+    value[:dualof]=primal[:spaceidentity];value[:primalspace]=primal;value.dualOf=primal;value.primalSpace=primal;
+    primal[:dualspace]=value;primal.dualSpace=value;
+    @linalgState[:dualspaces]=@linalgState[:dualspaces].Push({= spaceId=primal[:spaceidentity],token=primal[:identitytoken],value=value }); value;
+};
+LinalgGraphRestoreFrameDual(state,record) -> {;
+    (record[:kind]==:frame && record[:canonicaldual]!=_) ?_> _;
+    value=LinalgGraphBuilt(state,record[:id]); primal=LinalgGraphBuilt(state,record[:primalframeid]);
+    primal[:canonicaldualframe]=value;
+    @linalgState[:canonicaldualframes]=@linalgState[:canonicaldualframes].Push({= frameId=primal[:frameidentity],token=primal[:identitytoken],value=value });value;
+};
+LinalgImportGraph(graph,options ?= {= }) -> {;
+    limits=LinalgGraphLimits(options);
+    inert=.MathDecodeJSON(.MathEncodeJSON(graph)); state=LinalgGraphValidate(inert,limits);
+    state[:values]=LinalgZeros(state[:records].Len()).Map((unused)->{= });
+    records=state[:records];
+    _ := records.Map((record)->LinalgGraphBuildInitial(state,record));
+    LinalgGraphBuildFrames(state);
+    _ := records.Map((record)->LinalgGraphBuildAlgebra(state,record));
+    _ := records.Map((record)->LinalgGraphBuildTensor(state,record));
+    state[:replaywork]=0;
+    _ := records.Map((record)->LinalgGraphReplay(state,record));
+    state[:linked]={= };
+    _ := records.Map((record)->LinalgGraphRestoreTensorLinks(state,record));
+    _ := records.Map((record)->LinalgGraphRestoreHistory(state,record));
+    _ := records.Map((record)->LinalgGraphBuildRealization(state,record));
+    _ := records.Map((record)->LinalgGraphRestoreSpaceDual(state,record));
+    _ := records.Map((record)->LinalgGraphRestoreFrameDual(state,record));
+    inert[:roots].Map((id)->LinalgGraphBuilt(state,id));
 };
 
 .TypeKnown(:LinalgTensor) ?: _ ?_ .TypeRegister({=
     name=:LinalgTensor, nativeType=:map, validate=(value)->LinalgTensorIs(value), proto={= },
     installs={=
+        EQ=[{= name=:LinalgTensorEquality,priority=400,prep=(left,right)->LinalgTensorIs(left)||LinalgTensorIs(right),impl=(left,right)->LinalgTensorEqual(left,right) }],
+        NEQ=[{= name=:LinalgTensorInequality,priority=400,prep=(left,right)->LinalgTensorIs(left)||LinalgTensorIs(right),impl=(left,right)->!LinalgTensorEqual(left,right) }],
         ADD=[{= name=:LinalgTensorAddition, priority=400, prep=(left,right)->LinalgTensorIs(left)&&LinalgTensorIs(right), impl=(left,right)->LinalgCombine(:add,left,right) }],
         SUB=[{= name=:LinalgTensorSubtraction, priority=400, prep=(left,right)->LinalgTensorIs(left)&&LinalgTensorIs(right), impl=(left,right)->LinalgCombine(:sub,left,right) }],
         MUL=[{= name=:LinalgTensorScaling, priority=400, prep=(left,right)->LinalgTensorIs(left)!=LinalgTensorIs(right), impl=(left,right)->LinalgTensorIs(left) ?: LinalgScale(:mul,left,right) ?_ LinalgScale(:mul,right,left,1) }],
@@ -14462,6 +16633,10 @@ LinalgSerialize(value) -> {;
 linalgNamespace={= };
 linalgNamespace._mutable=1;
 linalgNamespace._proto={=
+    CharacteristicPolynomial=(self,value,variable ?= :x,options ?= {= })->LinalgCharacteristicPolynomial(value,variable,options),
+    MinimalPolynomial=(self,value,variable ?= :x,options ?= {= })->LinalgMinimalPolynomial(value,variable,options),
+    RationalEigenspaces=(self,value,variable ?= :x,options ?= {= })->LinalgRationalEigenspaces(value,variable,options),
+    VerifySpectral=(self,value,options ?= _)->LinalgVerifySpectral(value,options),
     Rref=(self,value)->LinalgRref(value), Rank=(self,value)->LinalgRank(value),
     Determinant=(self,value)->LinalgDeterminant(value), Inverse=(self,value)->LinalgInverse(value),
     Solve=(self,first,second ?= _)->second==_ ?: LinalgSolve(first) ?_ LinalgSolveValues(first,second),
@@ -14475,6 +16650,8 @@ linalgNamespace._proto={=
     NullSpace=(self,value)->LinalgNullSpace(value),
     VectorSpace=(self,first,second ?= _,options ?= {= })->LinalgVectorSpace(first,second,options),
     DualSpace=(self,space)->LinalgDualSpace(space),
+    DualFrame=(self,frame,name ?= _,basis ?= _)->LinalgDualFrame(frame,name,basis),
+    Metric=(self,frame,matrix,options ?= {= })->LinalgMetric(frame,matrix,options),
     Frame=(self,space,specification ?= _,basis ?= _,options ?= {= })->LinalgFrame(space,specification,basis,options),
     Tensor=(self,components,frames,variance ?= _,options ?= {= })->LinalgTensor(components,frames,variance,options),
     Vector=(self,components,frame,options ?= {= })->LinalgVector(components,frame,options),
@@ -14489,6 +16666,13 @@ linalgNamespace._proto={=
     Realize=(self,adapter,value)->LinalgRealize(adapter,value),
     Reconstruct=(self,adapter,value)->LinalgReconstruct(adapter,value),
     Serialize=(self,value)->LinalgSerialize(value),
+    SameSource=(self,left,right)->LinalgSameSource(left,right),
+    ScalarField=(self)->LinalgRationalField(),CoordinateStorage=(self,value)->LinalgCoordinateStorage(value),
+    SparseCoordinates=(self,terms,shape,options ?= {= })->LinalgSparseCoordinates(terms,shape,options),
+    RestoreCoordinates=(self,record)->LinalgRestoreCoordinates(record),VerifyCoordinates=(self,record)->LinalgVerifyCoordinates(record),
+    VerifyProjection=(self,record)->LinalgVerifyProjection(record),
+    ExportGraph=(self,values,options ?= {= })->LinalgExportGraph(values,options),
+    ImportGraph=(self,graph,options ?= {= })->LinalgImportGraph(graph,options),
     ChangeMatrix=(self,source,target)->LinalgChangeMatrix(source,target),
     Transform=(self,value,target)->LinalgTransform(value,target),
     Components=(self,value)->LinalgComponents(value), Pair=(self,left,right)->LinalgPair(left,right),
@@ -14513,17 +16697,21 @@ linalgNamespace._proto["TRANSFORM!"]=(self,value,target)->LinalgTransformBang(va
 .Host.RegisterMethod("Matrix","RowSpace",(value)->LinalgRowSpace(value),"linalg","linalg");
 .Host.RegisterMethod("Matrix","ColumnSpace",(value)->LinalgColumnSpace(value),"linalg","linalg");
 .Host.RegisterMethod("Matrix","NullSpace",(value)->LinalgNullSpace(value),"linalg","linalg");
+
+.Host.RegisterMethod("Matrix","CharacteristicPolynomial",(value,variable ?= :x,options ?= {= })->LinalgCharacteristicPolynomial(value,variable,options),"linalg","linalg");
+.Host.RegisterMethod("Matrix","MinimalPolynomial",(value,variable ?= :x,options ?= {= })->LinalgMinimalPolynomial(value,variable,options),"linalg","linalg");
+.Host.RegisterMethod("Matrix","RationalEigenspaces",(value,variable ?= :x,options ?= {= })->LinalgRationalEigenspaces(value,variable,options),"linalg","linalg");
 `, sourcePath: "bundled:linalg", kind: "rix" });
-  catalog.addMetadata({ id: "logic", description: "Portable propositional formulas, bounded truth tables, checked normal forms, scoped natural deduction, and educational tree views.", kind: "rix", mount: "logic", exports: ["Atom", "Top", "Bottom", "Not", "And", "Or", "Implies", "Iff", "Evaluate", "Valuations", "TruthTable", "Classify", "Tableau", "CheckTableau", "NNF", "CNF", "DNF", "CheckNormalForm", "Step", "Subproof", "Proof", "CheckProof", "SyntaxTree", "ProofTree", "IsFormula", "Capabilities"], groups: ["Logic", "Education", "Exact"], permissions: [], provides: ["rix.logic@1", "rix.logic.formula@1", "rix.logic.truth-table@1", "rix.logic.normal-form@1", "rix.logic.proof@1", "rix.logic.tree@1", "rix.logic.tableau@1"], schemas: ["rix.logic.formula@1", "rix.logic.truth-table@1", "rix.logic.normal-form@1", "rix.logic.proof@1", "rix.logic.tree@1", "rix.logic.tableau@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:logic" }, { source: `/**
+  catalog.addMetadata({ id: "logic", description: "Portable propositional formulas, bounded truth tables, checked normal forms, scoped natural deduction, and educational tree views.", kind: "rix", mount: "logic", exports: ["Atom", "Top", "Bottom", "Not", "And", "Or", "Implies", "Iff", "Evaluate", "Valuations", "TruthTable", "Classify", "Tableau", "CheckTableau", "NNF", "CNF", "DNF", "CheckNormalForm", "Step", "Subproof", "Proof", "CheckProof", "SyntaxTree", "ProofTree", "Sequent", "CheckSequent", "SequentTree", "ExactProposition", "CheckProposition", "IsFormula", "Capabilities"], groups: ["Logic", "Education", "Exact"], permissions: [], provides: ["rix.logic@1", "rix.logic.formula@1", "rix.logic.truth-table@1", "rix.logic.normal-form@1", "rix.logic.proof@1", "rix.logic.tree@1", "rix.logic.tableau@1", "rix.logic.sequent@1", "rix.logic.sequent-tree@1", "rix.logic.exact-proposition@1"], schemas: ["rix.logic.formula@1", "rix.logic.truth-table@1", "rix.logic.normal-form@1", "rix.logic.proof@1", "rix.logic.tree@1", "rix.logic.tableau@1", "rix.logic.sequent@1", "rix.logic.sequent-tree@1", "rix.logic.exact-proposition@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:logic" }, { source: `/**
 id: logic
 description: Portable propositional formulas, bounded truth tables, checked normal forms, scoped natural deduction, and educational tree views.
 kind: rix
 mount: logic
-exports: [Atom, Top, Bottom, Not, And, Or, Implies, Iff, Evaluate, Valuations, TruthTable, Classify, Tableau, CheckTableau, NNF, CNF, DNF, CheckNormalForm, Step, Subproof, Proof, CheckProof, SyntaxTree, ProofTree, IsFormula, Capabilities]
+exports: [Atom, Top, Bottom, Not, And, Or, Implies, Iff, Evaluate, Valuations, TruthTable, Classify, Tableau, CheckTableau, NNF, CNF, DNF, CheckNormalForm, Step, Subproof, Proof, CheckProof, SyntaxTree, ProofTree, Sequent, CheckSequent, SequentTree, ExactProposition, CheckProposition, IsFormula, Capabilities]
 groups: [Logic, Education, Exact]
 permissions: []
-provides: [rix.logic@1, rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1, rix.logic.tableau@1]
-schemas: [rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1, rix.logic.tableau@1]
+provides: [rix.logic@1, rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1, rix.logic.tableau@1, rix.logic.sequent@1, rix.logic.sequent-tree@1, rix.logic.exact-proposition@1]
+schemas: [rix.logic.formula@1, rix.logic.truth-table@1, rix.logic.normal-form@1, rix.logic.proof@1, rix.logic.tree@1, rix.logic.tableau@1, rix.logic.sequent@1, rix.logic.sequent-tree@1, rix.logic.exact-proposition@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -15229,7 +17417,8 @@ logicCapabilities = .ImmutableValue({=
     proofStructure=[:scopedSubproofs,:explicitDischarge,:naturalDeductionTrees],
     views=[:syntaxTree,:proofTree],
     tableaux=[:signedPropositional,:openClosedBranchEvidence,:boundedSearch,:replay],
-    next=[:boundedFirstOrderModels,:sequentCalculus]
+    sequents=[:classicalLK,:explicitRuleIds,:boundedSearch,:replay,:staticTree],
+    next=[:boundedFirstOrderModels]
 });
 
 logicNamespace = {= };
@@ -15258,6 +17447,11 @@ logicNamespace._proto = {=
     CheckProof=(self,proof)->LogicCheckProof(proof),
     SyntaxTree=(self,value)->LogicSyntaxTree(value),
     ProofTree=(self,proof)->LogicProofTree(proof),
+    Sequent=(self,left,right,options ?= {= })->.LogicSequent(left,right,options),
+    CheckSequent=(self,proof)->.LogicCheckSequent(proof),
+    SequentTree=(self,proof,options ?= {= })->.LogicSequentTree(proof,options),
+    ExactProposition=(self,operation,left,right)->.LogicExactProposition(operation,left,right),
+    CheckProposition=(self,evidence)->.LogicCheckProposition(evidence),
     IsFormula=(self,value)->LogicIsFormulaValue(value) ?: 1 ?_ _,
     Capabilities=(self)->logicCapabilities
 };
@@ -15265,17 +17459,17 @@ logicNamespace._proto = {=
 `, sourcePath: "bundled:logic", kind: "rix" });
   catalog.addMetadata({ id: "markdown", description: "CommonMark-oriented renderer for portable RiX documents.", kind: "host", mount: "markdown", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.markdown@1", "rix.renderer.markdown@2"], schemas: ["rix.markdown.render@2"], targets: ["markdown", "text/markdown"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:markdown" }, { sourcePath: "bundled:markdown", kind: "host" });
   catalog.registerInstaller("markdown", install11);
-  catalog.addMetadata({ id: "nd", description: "Pure-RiX exact n-dimensional geometry with affine and Cayley projection records and explicit Scene3D adaptation.", kind: "rix", mount: "nd", exports: ["Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "Field", "Evaluate", "SampleField", "AffineSlice", "Parameterize", "Hyperplane", "Section", "Fiber", "ProjectionFamily", "ProjectionAt", "ToPlot", "ToScene3D"], groups: ["Geometry", "Scene3D", "Exact"], permissions: [], requires: ["rix.scene3d@1", "rix.plot@1"], provides: ["rix.nd@1", "rix.nd@2", "rix.nd.projection@1", "rix.nd.field@1", "rix.nd.slice@1", "rix.nd.fiber@1", "rix.nd.projection-family@1"], schemas: ["rix.nd@1", "rix.nd.projection@1", "rix.nd.field@1", "rix.nd.slice@1", "rix.nd.hyperplane@1", "rix.nd.fiber@1", "rix.nd.projection-family@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:nd" }, { source: `/**
+  catalog.addMetadata({ id: "nd", description: "Pure-RiX exact n-dimensional geometry with affine and Cayley projection records and explicit Scene3D adaptation.", kind: "rix", mount: "nd", exports: ["ImplicitRegion", "CheckRegion", "RefineRegion", "ImplicitSlice", "ProjectRegion", "RegionScene", "LinkedRegions", "Point", "Polyline", "Polytope", "Hypercube", "Projection", "CoordinateProjection", "CayleyRotation", "Compose", "Project", "Field", "Evaluate", "SampleField", "AffineSlice", "Parameterize", "Hyperplane", "Section", "Fiber", "ProjectionFamily", "ProjectionAt", "ToPlot", "ToScene3D"], groups: ["Geometry", "Scene3D", "Exact"], permissions: [], requires: ["rix.scene3d@1", "rix.plot@1"], provides: ["rix.geometry.implicit-region@1", "rix.nd.projected-region@1", "rix.nd.region-view@1", "rix.nd@1", "rix.nd@2", "rix.nd.projection@1", "rix.nd.field@1", "rix.nd.slice@1", "rix.nd.fiber@1", "rix.nd.projection-family@1"], schemas: ["rix.geometry.implicit-region@1", "rix.nd.projected-region@1", "rix.nd.region-view@1", "rix.nd@1", "rix.nd.projection@1", "rix.nd.field@1", "rix.nd.slice@1", "rix.nd.hyperplane@1", "rix.nd.fiber@1", "rix.nd.projection-family@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:nd" }, { source: `/**
 id: nd
 description: Pure-RiX exact n-dimensional geometry with affine and Cayley projection records and explicit Scene3D adaptation.
 kind: rix
 mount: nd
-exports: [Point, Polyline, Polytope, Hypercube, Projection, CoordinateProjection, CayleyRotation, Compose, Project, Field, Evaluate, SampleField, AffineSlice, Parameterize, Hyperplane, Section, Fiber, ProjectionFamily, ProjectionAt, ToPlot, ToScene3D]
+exports: [ImplicitRegion, CheckRegion, RefineRegion, ImplicitSlice, ProjectRegion, RegionScene, LinkedRegions, Point, Polyline, Polytope, Hypercube, Projection, CoordinateProjection, CayleyRotation, Compose, Project, Field, Evaluate, SampleField, AffineSlice, Parameterize, Hyperplane, Section, Fiber, ProjectionFamily, ProjectionAt, ToPlot, ToScene3D]
 groups: [Geometry, Scene3D, Exact]
 permissions: []
 requires: [rix.scene3d@1, rix.plot@1]
-provides: [rix.nd@1, rix.nd@2, rix.nd.projection@1, rix.nd.field@1, rix.nd.slice@1, rix.nd.fiber@1, rix.nd.projection-family@1]
-schemas: [rix.nd@1, rix.nd.projection@1, rix.nd.field@1, rix.nd.slice@1, rix.nd.hyperplane@1, rix.nd.fiber@1, rix.nd.projection-family@1]
+provides: [rix.geometry.implicit-region@1, rix.nd.projected-region@1, rix.nd.region-view@1, rix.nd@1, rix.nd@2, rix.nd.projection@1, rix.nd.field@1, rix.nd.slice@1, rix.nd.fiber@1, rix.nd.projection-family@1]
+schemas: [rix.geometry.implicit-region@1, rix.nd.projected-region@1, rix.nd.region-view@1, rix.nd@1, rix.nd.projection@1, rix.nd.field@1, rix.nd.slice@1, rix.nd.hyperplane@1, rix.nd.fiber@1, rix.nd.projection-family@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -15347,7 +17541,7 @@ NDProjectionValue(matrix,offset,method,provenance ?= [])->{;
 NDProjection(matrix,offset ?= _,options ?= {= })->{;
     settings=matrix ? :Map ?: matrix ?_ options.Merge({= matrix=matrix,offset=offset });
     rows=settings[:matrix]; zeroOffset=rows.Map((row)->0);
-    NDProjectionValue(rows,NDOption(settings,"offset",zeroOffset),NDOption(settings,"method","affine"),NDProvenance(settings));
+    NDProjectionValue(rows,NDOption(settings,"offset",zeroOffset)==_ ?: zeroOffset ?_ NDOption(settings,"offset",zeroOffset),NDOption(settings,"method","affine"),NDProvenance(settings));
 };
 
 NDCoordinateProjection(sourceDimension,axes ?= _)->{;
@@ -15638,8 +17832,73 @@ NDToScene3D(geometry,options ?= {= })->{;
     .scene3d.Scene([.scene3d.Group(children)],sceneOptions);
 };
 
+## Whole-box implicit evidence, affine sections, and conservative projected covers.
+NDImplicitSlice(expression,variables,slice,box,options ?= {= })->{;
+    selected=NDSliceRequire(slice);
+    variables.Len()==selected[:sourceDimension] ?_> .Error("nd.ImplicitSlice variable dimension differs from slice");
+    .ImplicitRegion(expression,box,options.Merge({= affine={= variables=variables,matrix=selected[:inclusion][:matrix],offset=selected[:origin] } }));
+};
+NDProjectRegion(region,projection)->{;
+    .ImplicitRegionCheck(region)[:accepted]==1 ?_> .Error("nd.ProjectRegion requires replayed implicit evidence");
+    NDIsProjection(projection) ?_> .Error("nd.ProjectRegion requires an affine projection");
+    projection[:sourceDimension]==region[:variables].Len()&&projection[:targetDimension]<=8 ?_> .Error("nd.ProjectRegion projection dimension mismatch or budget exceeded");
+    .ValidatedClaimEqual(projection,projection);
+    leaves=region[:inside].Concat(region[:excluded]).Concat(region[:unresolved]);
+    cells=leaves.Map((leaf)->{;
+        bounds=@region[:variables].Map((name)->leaf[:box][:axes][name].ToRationalInterval());
+        {= id=leaf[:id],bounds=NDApply(@projection[:matrix],bounds,@projection[:offset]),classification=leaf[:classification],source=leaf,
+            enclosureCertified=1,sourceCertified=NDOption(leaf,"certified",_),rootExistence=_,topology=:unproved };
+    });
+    result=.ImmutableValue({= schema="rix.nd.projected-region@1",source=region,projection=projection,dimension=projection[:targetDimension],cells=cells,
+        certified=1,meaning=:affineEnclosureOfSourceCells,possibleOverlap=1,projectionAddsRootExistence=_,topology=:unproved });
+    .ValidatedClaimEqual(result,result);result;
+};
+NDRegionScene(projected,options ?= {= })->{;
+    projected[:schema]=="rix.nd.projected-region@1" ?_> .Error("nd.RegionScene requires a projected region");
+    .ValidatedClaimEqual(projected,NDProjectRegion(projected[:source],projected[:projection])) ?_> .Error("nd.RegionScene projected evidence changed");
+    projected[:dimension]==2||projected[:dimension]==3 ?_> .Error("nd.RegionScene requires a two or three dimensional projection");
+    maximum=NDInteger(NDOption(options,"maxvisiblecells",64),"nd.RegionScene maxVisibleCells");maximum>=1&&maximum<=256 ?_> .Error("nd.RegionScene visible-cell budget exceeded");
+    id=NDOption(options,"id","region");cells=projected[:cells].Filter((cell)->cell[:classification]!=:excluded||NDOption(@options,"showexcluded",_));
+    children:=[];uncertainty:=[];omitted:=[];
+    {@ index=1;index<=@cells.Len();{;
+        cell=@cells[index];bounds=cell[:bounds].Map((bound)->bound ? :RationalInterval ?: bound ?_ (bound:bound));
+        bounds=bounds.Len()==2 ?: bounds.Push(0:0) ?_ bounds;
+        (cell[:classification]!=:inside&&cell[:classification]!=:excluded) ?: {; @uncertainty~=@uncertainty.Push(@cell); } ?_ _;
+        index<=@maximum ?: {;
+            color=@cell[:classification]==:inside ?: "#047857" ?_ "#d97706";
+            @children~=@children.Push(.scene3d.CellBox(@bounds,{= id=@"@{@id}.@{@cell[:id]}",color=color,opacity=1/4,metadata=@cell,label=@"@{@cell[:classification]} projected enclosure" }));
+        } ?_ {; @omitted~=@omitted.Push(@cell.Merge({= displayBounds=@bounds })); };
+    };index+=1};
+    omitted.Len()>0 ?: {;
+        hull=[1,2,3].Map((axis)->@omitted.Reduce((range,cell)->.Min(range.Low(),cell[:displayBounds][@axis].Low()):.Max(range.High(),cell[:displayBounds][@axis].High()),@omitted[1][:displayBounds][axis]));
+        @children~=@children.Push(.scene3d.CellBox(hull,{= id=@"@{@id}.omitted",color="#64748b",opacity=1/5,metadata={= cells=@omitted,meaning=:omittedProjectedCover } }));
+    } ?_ _;
+    children~=children.Push(.scene3d.Annotation([0,0,0],@"Projected cell cover: @{uncertainty.Len()} unresolved, @{omitted.Len()} omitted",{= id=@"@{id}.legend",size=11,policy=.scene3d.AnnotationPolicy({= offset=NDOption(options,"legendoffset",[0,0]) }) }));
+    .scene3d.Scene(children,options.Merge({= metadata={= schema="rix.nd.region-view@1",source=projected,uncertainty=uncertainty,omitted=omitted,
+        work={= visibleCells=.Min(maximum,cells.Len()),maxVisibleCells=maximum,omittedCells=omitted.Len() },projectionAddsCertification=_,topology=:unproved } }));
+};
+NDLinkedRegions(region,projections,options ?= {= })->{;
+    projections.Len()>=1&&projections.Len()<=8 ?_> .Error("nd.LinkedRegions requires one through eight projections");
+    id=NDOption(options,"id","region");
+    scenes=projections.Map((projection)->NDRegionScene(NDProjectRegion(@region,projection),@options));
+    cells=region[:inside].Concat(NDOption(options,"showexcluded",_) ?: region[:excluded] ?_ []).Concat(region[:unresolved]);maximum=NDOption(options,"maxvisiblecells",64);
+    groups:=[];
+    {@ index=1;index<=.Min(@maximum,@cells.Len());{;
+        selectors:=[];{@ panel=1;panel<=@projections.Len();{; @selectors~=@selectors.Push({= panel=panel,id=@"@{@id}.@{@cells[@index][:id]}" }); };panel+=1};
+        @groups~=@groups.Push(selectors);
+    };index+=1};
+    .scene3d.LinkedViews(scenes,groups,options);
+};
+
 ndNamespace={= };
 ndNamespace._proto={=
+    ImplicitRegion=(self,expression,box,options ?= {= })->.ImplicitRegion(expression,box,options),
+    CheckRegion=(self,region)->.ImplicitRegionCheck(region),
+    RefineRegion=(self,region,options ?= {= })->.ImplicitRegionRefine(region,options),
+    ImplicitSlice=(self,expression,variables,slice,box,options ?= {= })->NDImplicitSlice(expression,variables,slice,box,options),
+    ProjectRegion=(self,region,projection)->NDProjectRegion(region,projection),
+    RegionScene=(self,projected,options ?= {= })->NDRegionScene(projected,options),
+    LinkedRegions=(self,region,projections,options ?= {= })->NDLinkedRegions(region,projections,options),
     Point=(self,coordinates,options ?= {= })->NDPoint(coordinates,options),
     Polyline=(self,points,options ?= {= })->NDPolyline(points,options),
     Polytope=(self,vertices,edges ?= _,options ?= {= })->NDPolytope(vertices,edges,options),
@@ -15664,17 +17923,17 @@ ndNamespace._proto={=
 };
 .Host.RegisterValue("nd",ndNamespace,"Pure-RiX exact ND fields, slices, fibers, geometry, and explicit projections",["Geometry","Scene3D","Exact"]);
 `, sourcePath: "bundled:nd", kind: "rix" });
-  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "ErrorBudget", "PropagateError", "RefinementHistory", "RefineHistory", "Enclose", "Refine", "Sample", "Compare", "IsolateRoot", "AdaptiveSample", "Integrate", "Optimize", "IntervalNewton", "Krawczyk", "CheckKrawczyk", "Constant", "ExplainSelection", "Range", "GraphRange", "CheckGraphRange", "SimplifyGraph", "CheckGraphSimplification", "RewriteGraph", "CheckGraphRewrite", "CheckDerivativeGraph", "DerivativeProof", "DerivativeSign", "LipschitzRange", "TaylorRange", "Box", "MultivariateRequest", "JacobianRange", "AffineRange", "TaylorModelRange", "CheckMultivariateRange", "RecognizeGraph", "FunctionFacts", "WithRangeKnowledge", "RegisterRangeProvider", "CheckRangeResult", "Sign", "RootCount", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Cbrt", "Hypot", "Pow", "Exp", "Expm1", "Log", "Log1p", "Ln", "Log2", "Log10", "Pi", "EulerGamma", "Sin", "Cos", "Tan", "Sec", "Csc", "Cot", "Sinc", "Asin", "Acos", "Atan", "Atan2", "Arcsin", "Arccos", "Arctan", "Sinh", "Cosh", "Tanh", "Sech", "Csch", "Coth", "Asinh", "Acosh", "Atanh", "Arsinh", "Arcosh", "Artanh", "Radians", "Degrees", "Gamma", "LogGamma", "Beta", "LogBeta", "Digamma", "Trigamma", "Erf", "Erfc", "NormalPDF", "NormalCDF", "NormalQuantile", "LambertW", "BesselJ", "BesselJ0", "BesselJ1", "BesselY", "BesselY0", "BesselY1", "BesselI", "BesselI0", "BesselI1", "BesselK", "BesselK0", "BesselK1", "Zeta", "Quadrature", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.numerics@2", "rix.enclosable-real-consumer@1", "rix.exact-sign-consumer@1", "rix.root-count-consumer@1", "rix.calculus-range-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.error-budget@1", "rix.numerics.error-propagation@1", "rix.numerics.refinement-history@1", "rix.numerics.selection-explanation@1", "rix.numerics.comparison@1", "rix.numerics.root-isolation@1", "rix.numerics.adaptive-sample@1", "rix.numerics.optimization@1", "rix.numerics.interval-newton@1", "rix.numerics.krawczyk-box@1", "rix.numerics.algorithm-real@1", "rix.numerics.interval-image@1", "rix.numerics.range-enclosure@1", "rix.numerics.range-provider@1", "rix.numerics.range-provider-result@1", "rix.numerics.function-facts@1", "rix.numerics.calculus-graph-range@1", "rix.calculus.graph-simplification@1", "rix.calculus.graph-rewrite@1", "rix.numerics.rational-box@1", "rix.numerics.multivariate-range-request@1", "rix.numerics.jacobian-box-range@1", "rix.numerics.affine-box-range@1", "rix.numerics.taylor-model-box-range@1", "rix.numerics.calculus-graph-recognition@1", "rix.numerics.calculus-derivative-sign@1", "rix.exact.sign-witness@1", "rix.exact.root-count@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
+  catalog.addMetadata({ id: "numerics", description: "Backend-neutral bounded enclosure and refinement orchestration.", kind: "rix", mount: "numerics", exports: ["Request", "WorkPolicy", "EffectiveLimits", "ErrorBudget", "PropagateError", "RefinementHistory", "RefineHistory", "Enclose", "Refine", "Sample", "Compare", "IsolateRoot", "AdaptiveSample", "Integrate", "Optimize", "IntervalNewton", "IntervalLinearSolve", "CheckIntervalLinearSolve", "IntervalNewtonBox", "CheckIntervalNewtonBox", "SubdivideBoxes", "ResumeBoxes", "CheckBoxSubdivision", "Krawczyk", "CheckKrawczyk", "Constant", "ExplainSelection", "Range", "GraphRange", "CheckGraphRange", "SimplifyGraph", "CheckGraphSimplification", "RewriteGraph", "CheckGraphRewrite", "CheckDerivativeGraph", "DerivativeProof", "DerivativeSign", "LipschitzRange", "TaylorRange", "Box", "MultivariateRequest", "JacobianRange", "AffineRange", "TaylorModelRange", "CheckMultivariateRange", "RecognizeGraph", "FunctionFacts", "WithRangeKnowledge", "RegisterRangeProvider", "CheckRangeResult", "Sign", "RootCount", "Capabilities", "CheckResult", "NthRoot", "Sqrt", "Cbrt", "Hypot", "Pow", "Exp", "Expm1", "Log", "Log1p", "Ln", "Log2", "Log10", "Pi", "EulerGamma", "Sin", "Cos", "Tan", "Sec", "Csc", "Cot", "Sinc", "Asin", "Acos", "Atan", "Atan2", "Arcsin", "Arccos", "Arctan", "Sinh", "Cosh", "Tanh", "Sech", "Csch", "Coth", "Asinh", "Acosh", "Atanh", "Arsinh", "Arcosh", "Artanh", "Radians", "Degrees", "Gamma", "LogGamma", "Beta", "LogBeta", "Digamma", "Trigamma", "Erf", "Erfc", "NormalPDF", "NormalCDF", "NormalQuantile", "LambertW", "BesselJ", "BesselJ0", "BesselJ1", "BesselY", "BesselY0", "BesselY1", "BesselI", "BesselI0", "BesselI1", "BesselK", "BesselK0", "BesselK1", "Zeta", "Quadrature", "Kantorovich"], groups: ["Numerics"], permissions: [], requires: ["rix.oracle@1"], provides: ["rix.numerics@1", "rix.numerics@2", "rix.enclosable-real-consumer@1", "rix.exact-sign-consumer@1", "rix.root-count-consumer@1", "rix.calculus-range-consumer@1"], schemas: ["rix.numerics.refinement-request@1", "rix.numerics.enclosure@1", "rix.numerics.error-budget@1", "rix.numerics.error-propagation@1", "rix.numerics.refinement-history@1", "rix.numerics.selection-explanation@1", "rix.numerics.comparison@1", "rix.numerics.root-isolation@1", "rix.numerics.adaptive-sample@1", "rix.numerics.optimization@1", "rix.numerics.interval-newton@1", "rix.numerics.interval-linear-solve@1", "rix.numerics.interval-newton-box@1", "rix.numerics.box-subdivision@1", "rix.numerics.krawczyk-box@1", "rix.numerics.algorithm-real@1", "rix.numerics.interval-image@1", "rix.numerics.range-enclosure@1", "rix.numerics.range-provider@1", "rix.numerics.range-provider-result@1", "rix.numerics.function-facts@1", "rix.numerics.calculus-graph-range@1", "rix.calculus.graph-simplification@1", "rix.calculus.graph-rewrite@1", "rix.numerics.rational-box@1", "rix.numerics.multivariate-range-request@1", "rix.numerics.jacobian-box-range@1", "rix.numerics.affine-box-range@1", "rix.numerics.taylor-model-box-range@1", "rix.numerics.calculus-graph-recognition@1", "rix.numerics.calculus-derivative-sign@1", "rix.exact.sign-witness@1", "rix.exact.root-count@1"], defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], snapshot: false, deterministic: false, operatorFiles: [], ignore: false, sourcePath: "bundled:numerics" }, { source: `/**
 id: numerics
 description: Backend-neutral bounded enclosure and refinement orchestration.
 kind: rix
 mount: numerics
-exports: [Request, WorkPolicy, EffectiveLimits, ErrorBudget, PropagateError, RefinementHistory, RefineHistory, Enclose, Refine, Sample, Compare, IsolateRoot, AdaptiveSample, Integrate, Optimize, IntervalNewton, Krawczyk, CheckKrawczyk, Constant, ExplainSelection, Range, GraphRange, CheckGraphRange, SimplifyGraph, CheckGraphSimplification, RewriteGraph, CheckGraphRewrite, CheckDerivativeGraph, DerivativeProof, DerivativeSign, LipschitzRange, TaylorRange, Box, MultivariateRequest, JacobianRange, AffineRange, TaylorModelRange, CheckMultivariateRange, RecognizeGraph, FunctionFacts, WithRangeKnowledge, RegisterRangeProvider, CheckRangeResult, Sign, RootCount, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Hypot, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Atan2, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Beta, LogBeta, Digamma, Trigamma, Erf, Erfc, NormalPDF, NormalCDF, NormalQuantile, LambertW, BesselJ, BesselJ0, BesselJ1, BesselY, BesselY0, BesselY1, BesselI, BesselI0, BesselI1, BesselK, BesselK0, BesselK1, Zeta, Quadrature, Kantorovich]
+exports: [Request, WorkPolicy, EffectiveLimits, ErrorBudget, PropagateError, RefinementHistory, RefineHistory, Enclose, Refine, Sample, Compare, IsolateRoot, AdaptiveSample, Integrate, Optimize, IntervalNewton, IntervalLinearSolve, CheckIntervalLinearSolve, IntervalNewtonBox, CheckIntervalNewtonBox, SubdivideBoxes, ResumeBoxes, CheckBoxSubdivision, Krawczyk, CheckKrawczyk, Constant, ExplainSelection, Range, GraphRange, CheckGraphRange, SimplifyGraph, CheckGraphSimplification, RewriteGraph, CheckGraphRewrite, CheckDerivativeGraph, DerivativeProof, DerivativeSign, LipschitzRange, TaylorRange, Box, MultivariateRequest, JacobianRange, AffineRange, TaylorModelRange, CheckMultivariateRange, RecognizeGraph, FunctionFacts, WithRangeKnowledge, RegisterRangeProvider, CheckRangeResult, Sign, RootCount, Capabilities, CheckResult, NthRoot, Sqrt, Cbrt, Hypot, Pow, Exp, Expm1, Log, Log1p, Ln, Log2, Log10, Pi, EulerGamma, Sin, Cos, Tan, Sec, Csc, Cot, Sinc, Asin, Acos, Atan, Atan2, Arcsin, Arccos, Arctan, Sinh, Cosh, Tanh, Sech, Csch, Coth, Asinh, Acosh, Atanh, Arsinh, Arcosh, Artanh, Radians, Degrees, Gamma, LogGamma, Beta, LogBeta, Digamma, Trigamma, Erf, Erfc, NormalPDF, NormalCDF, NormalQuantile, LambertW, BesselJ, BesselJ0, BesselJ1, BesselY, BesselY0, BesselY1, BesselI, BesselI0, BesselI1, BesselK, BesselK0, BesselK1, Zeta, Quadrature, Kantorovich]
 groups: [Numerics]
 permissions: []
 requires: [rix.oracle@1]
 provides: [rix.numerics@1, rix.numerics@2, rix.enclosable-real-consumer@1, rix.exact-sign-consumer@1, rix.root-count-consumer@1, rix.calculus-range-consumer@1]
-schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1, rix.numerics.error-budget@1, rix.numerics.error-propagation@1, rix.numerics.refinement-history@1, rix.numerics.selection-explanation@1, rix.numerics.comparison@1, rix.numerics.root-isolation@1, rix.numerics.adaptive-sample@1, rix.numerics.optimization@1, rix.numerics.interval-newton@1, rix.numerics.krawczyk-box@1, rix.numerics.algorithm-real@1, rix.numerics.interval-image@1, rix.numerics.range-enclosure@1, rix.numerics.range-provider@1, rix.numerics.range-provider-result@1, rix.numerics.function-facts@1, rix.numerics.calculus-graph-range@1, rix.calculus.graph-simplification@1, rix.calculus.graph-rewrite@1, rix.numerics.rational-box@1, rix.numerics.multivariate-range-request@1, rix.numerics.jacobian-box-range@1, rix.numerics.affine-box-range@1, rix.numerics.taylor-model-box-range@1, rix.numerics.calculus-graph-recognition@1, rix.numerics.calculus-derivative-sign@1, rix.exact.sign-witness@1, rix.exact.root-count@1]
+schemas: [rix.numerics.refinement-request@1, rix.numerics.enclosure@1, rix.numerics.error-budget@1, rix.numerics.error-propagation@1, rix.numerics.refinement-history@1, rix.numerics.selection-explanation@1, rix.numerics.comparison@1, rix.numerics.root-isolation@1, rix.numerics.adaptive-sample@1, rix.numerics.optimization@1, rix.numerics.interval-newton@1, rix.numerics.interval-linear-solve@1, rix.numerics.interval-newton-box@1, rix.numerics.box-subdivision@1, rix.numerics.krawczyk-box@1, rix.numerics.algorithm-real@1, rix.numerics.interval-image@1, rix.numerics.range-enclosure@1, rix.numerics.range-provider@1, rix.numerics.range-provider-result@1, rix.numerics.function-facts@1, rix.numerics.calculus-graph-range@1, rix.calculus.graph-simplification@1, rix.calculus.graph-rewrite@1, rix.numerics.rational-box@1, rix.numerics.multivariate-range-request@1, rix.numerics.jacobian-box-range@1, rix.numerics.affine-box-range@1, rix.numerics.taylor-model-box-range@1, rix.numerics.calculus-graph-recognition@1, rix.numerics.calculus-derivative-sign@1, rix.exact.sign-witness@1, rix.exact.root-count@1]
 defaultEnabled: false
 **/
 
@@ -21995,6 +24254,13 @@ numericsNamespace._proto = {=
     Krawczyk = (self, expressions, jacobian, bindings, options ?= {= }) ->
         .KrawczykBox(expressions,jacobian,bindings,options),
     CheckKrawczyk = (self, result) -> .KrawczykCheck(result),
+    IntervalLinearSolve = (self, matrix, rhs, options ?= {= }) -> .IntervalLinearSolve(matrix,rhs,options),
+    CheckIntervalLinearSolve = (self, result) -> .ValidatedBoxCheck(result),
+    IntervalNewtonBox = (self, expressions, jacobian, bindings, options ?= {= }) -> .IntervalNewtonBox(expressions,jacobian,bindings,options),
+    CheckIntervalNewtonBox = (self, result) -> .ValidatedBoxCheck(result),
+    SubdivideBoxes = (self, expressions, jacobian, bindings, options ?= {= }) -> .BoxSubdivide(expressions,jacobian,bindings,options),
+    ResumeBoxes = (self, result, options ?= {= }) -> .BoxResume(result,options),
+    CheckBoxSubdivision = (self, result) -> .ValidatedBoxCheck(result),
     CheckMultivariateRange = (self, result) -> .MultivariateRangeCheck(result),
     RecognizeGraph = (self, expression, variable, options ?= {= }) ->
         .CalculusRangeRecognize(expression, variable, options),
@@ -22355,17 +24621,17 @@ octonionNamespace._proto={=
 };
 .Host.RegisterValue("octonion",octonionNamespace,"Certified octonions with explicit nonassociativity and intrinsic slice functions",["Exact","Numerics"]);
 `, sourcePath: "bundled:octonion", kind: "rix" });
-  catalog.addMetadata({ id: "ode", description: "Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and configurable-order Taylor tubes, and certified event isolation.", kind: "rix", mount: "ode", exports: ["IVP", "Euler", "RK4", "AdaptiveRK4", "ValidatedPicard", "ValidatedTaylor2", "AdaptiveValidatedTaylor2", "ValidatedTaylor", "AdaptiveValidatedTaylor", "Event", "IsolateEvents", "At", "Points", "Segments", "Record", "IsProblem", "IsSolution"], groups: ["Numerics", "ODE", "Calculus"], permissions: [], requires: ["rix.calculus@1", "rix.numerics@2"], provides: ["rix.ode@1", "rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], schemas: ["rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ode" }, { source: `/**
+  catalog.addMetadata({ id: "ode", description: "Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and configurable-order Taylor tubes, and certified event isolation.", kind: "rix", mount: "ode", exports: ["HigherOrder", "ReduceHigherOrder", "Exact", "CheckExact", "ExactAt", "BVP", "Shoot", "CheckShooting", "TimePolynomialRange", "CheckTimePolynomialRange", "DormandPrince", "PrepareTaylor", "IVP", "Euler", "RK4", "AdaptiveRK4", "ValidatedPicard", "ValidatedTaylor2", "AdaptiveValidatedTaylor2", "ValidatedTaylor", "AdaptiveValidatedTaylor", "Event", "IsolateEvents", "At", "Points", "Segments", "Record", "IsProblem", "IsSolution"], groups: ["Numerics", "ODE", "Calculus"], permissions: [], requires: ["rix.calculus@1", "rix.numerics@2"], provides: ["rix.ode@1", "rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], schemas: ["rix.ode.higher-order@1", "rix.ode.exact-solution@1", "rix.ode.boundary-problem@1", "rix.ode.shooting-result@1", "rix.ode.time-polynomial-range@1", "rix.ode.taylor-construction@1", "rix.ode.problem@1", "rix.ode.solution@1", "rix.ode.dense-segment@1", "rix.ode.event@1", "rix.ode.event-result@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:ode" }, { source: `/**
 id: ode
 description: Portable initial-value problems, vector trajectories, adaptive demonstrations, checked Picard and configurable-order Taylor tubes, and certified event isolation.
 kind: rix
 mount: ode
-exports: [IVP, Euler, RK4, AdaptiveRK4, ValidatedPicard, ValidatedTaylor2, AdaptiveValidatedTaylor2, ValidatedTaylor, AdaptiveValidatedTaylor, Event, IsolateEvents, At, Points, Segments, Record, IsProblem, IsSolution]
+exports: [HigherOrder, ReduceHigherOrder, Exact, CheckExact, ExactAt, BVP, Shoot, CheckShooting, TimePolynomialRange, CheckTimePolynomialRange, DormandPrince, PrepareTaylor, IVP, Euler, RK4, AdaptiveRK4, ValidatedPicard, ValidatedTaylor2, AdaptiveValidatedTaylor2, ValidatedTaylor, AdaptiveValidatedTaylor, Event, IsolateEvents, At, Points, Segments, Record, IsProblem, IsSolution]
 groups: [Numerics, ODE, Calculus]
 permissions: []
 requires: [rix.calculus@1, rix.numerics@2]
 provides: [rix.ode@1, rix.ode.problem@1, rix.ode.solution@1, rix.ode.dense-segment@1, rix.ode.event@1, rix.ode.event-result@1]
-schemas: [rix.ode.problem@1, rix.ode.solution@1, rix.ode.dense-segment@1, rix.ode.event@1, rix.ode.event-result@1]
+schemas: [rix.ode.higher-order@1, rix.ode.exact-solution@1, rix.ode.boundary-problem@1, rix.ode.shooting-result@1, rix.ode.time-polynomial-range@1, rix.ode.taylor-construction@1, rix.ode.problem@1, rix.ode.solution@1, rix.ode.dense-segment@1, rix.ode.event@1, rix.ode.event-result@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -22435,7 +24701,8 @@ OdeNormalizeNames(value, count) -> {;
     names.Len() == count
       ?: _
       ?_ .Error("ODE stateNames length must match the state dimension");
-    names.Map((name)->name ? :String ?: name ?_ .Error("ODE state names must be strings"));
+    _ := names.Map((name)->name ? :String ?: name ?_ .Error("ODE state names must be strings"));
+    names.Map((name)->name.Lower()).Distinct().Len()==count ?_> .Error("ODE stateNames must be distinct");names;
 };
 
 OdeIVP(rhsValue, initialTimeValue, initialStateValue, intervalValue, options ?= {= }) -> {;
@@ -22455,7 +24722,7 @@ OdeIVP(rhsValue, initialTimeValue, initialStateValue, intervalValue, options ?= 
     independent ? :String
       ?: independent
       ?_ .Error("ODE independent variable must be a string");
-    stateNames.Includes(independent)
+    stateNames.Map((name)->name.Lower()).Includes(independent.Lower())
       ?: .Error("ODE independent variable must differ from every state name")
       ?_ _;
     initialTime = initialTimeValue ~!: :Rational;
@@ -22486,7 +24753,7 @@ OdeIVP(rhsValue, initialTimeValue, initialStateValue, intervalValue, options ?= 
         direction=interval.End()>initialTime ?: :forward ?_ :backward,
         portableExpression=1
     };
-    problem .= {= _proto=odeProblemProto };
+    problem .= {= _proto=@odeProblemProto };
     problem = .ImmutableValue(problem);
     problem;
 };
@@ -22602,7 +24869,7 @@ OdeApproximateSolution(problemValue, method, options ?= {= }) -> {;
         work={= steps=steps,rhsEvaluations=method == :euler ?: steps ?_ 4*steps,exhausted=_ },
         diagnostics=[:approximateNoCertifiedErrorBound]
     };
-    solution .= {= _proto=odeSolutionProto };
+    solution .= {= _proto=@odeSolutionProto };
     solution = .ImmutableValue(solution);
     solution;
 };
@@ -22697,8 +24964,87 @@ OdeAdaptiveRK4(problemValue, options ?= {= }) -> {;
           ?: [:approximateLocalEstimateNotGlobalCertificate]
           ?_ [:approximateLocalEstimateNotGlobalCertificate,:adaptiveBudgetExhausted]
     };
-    solution .= {= _proto=odeSolutionProto };
+    solution .= {= _proto=@odeSolutionProto };
     .ImmutableValue(solution);
+};
+
+odeDormandPrinceTableau=.ImmutableValue({=
+    c=[0,1/5,3/10,4/5,8/9,1,1],
+    a=[[],[1/5],[3/40,9/40],[44/45,-56/15,32/9],
+       [19372/6561,-25360/2187,64448/6561,-212/729],
+       [9017/3168,-355/33,46732/5247,49/176,-5103/18656],
+       [35/384,0,500/1113,125/192,-2187/6784,11/84]],
+    high=[35/384,0,500/1113,125/192,-2187/6784,11/84,0],
+    low=[5179/57600,0,7571/16695,393/640,-92097/339200,187/2100,1/40]
+});
+OdeWeightedStages(state,slopes,weights,h) -> weights.Reduce((value,weight,index)->
+    OdeVectorAdd(value,OdeVectorScale(@slopes[index],weight*@h)),state);
+OdeDormandPrinceStep(problem,time,state,h,first ?= _) -> {;
+    slopes:=[first==_ ?: OdePointValues(problem,time,state) ?_ first];next:=_;
+    {@ stage=2;stage<=7;{;
+        values=OdeWeightedStages(@state,@slopes,@odeDormandPrinceTableau[:a][stage],@h);
+        .ValidatedClaimEqual(values,values) ?_> .Error("ODE DormandPrince rational component budget exceeded");
+        stage==7 ?: {; @next~=@values; } ?_ _;
+        @slopes~=@slopes.Push(OdePointValues(@problem,@time+@odeDormandPrinceTableau[:c][stage]*@h,values));
+    };stage+=1};
+    embedded=OdeWeightedStages(state,slopes,@odeDormandPrinceTableau[:low],h);
+    estimate=OdeVectorMaxAbs(OdeVectorSubtract(next,embedded));
+    .ValidatedClaimEqual([next,embedded,estimate,slopes],[next,embedded,estimate,slopes]) ?_> .Error("ODE DormandPrince rational component budget exceeded");
+    {= next=next,embedded=embedded,slopes=slopes,estimate=estimate,rhsEvaluations=first==_ ?: 7 ?_ 6 };
+};
+OdeDormandPrinceAttempt={>
+    (problem,time,state,h,first) ?- [step=OdeDormandPrinceStep(problem,time,state,h,first)] -> {= ok=1,step=step },
+    (problem,time,state,h,first) -> {= ok=_,reason=:rhsOrArithmeticBudgetFailure }
+};
+OdeDormandPrince(problemValue,options ?= {= }) -> {;
+    problem=OdeRequireProblem(problemValue);options=OdeRequireOptions(options,"ODE DormandPrince options");
+    .ValidatedClaimEqual([problem,options],[problem,options]);
+    initialSteps=OdeRequirePositiveInteger(OdeOption(options,"initialsteps",4),"ODE initialSteps",4096);
+    maxAttempts=OdeRequirePositiveInteger(OdeOption(options,"maxattempts",128),"ODE maxAttempts",4096);
+    maxRejected=OdeRequirePositiveInteger(OdeOption(options,"maxrejected",64),"ODE maxRejected",4096);
+    tolerance=OdeRequirePositiveRational(OdeOption(options,"tolerance",1/1000000),"ODE tolerance");
+    minimumStep=OdeRequirePositiveRational(OdeOption(options,"minimumstep",1/1048576),"ODE minimumStep");
+    start=problem[:initialTime];end=problem[:interval].End();direction=OdeTimeDirection(problem);
+    time:=start;state:=OdeRequirePointState(problem,:dormandPrince54);h:=(end-start)/initialSteps;
+    maximumStep=OdeMagnitude(h);first:=_;points:=[[time,state]];segments:=[];attempts:=[];rejected:=0;evaluations:=0;stop:=_;
+    OdeFitsClaim([problem,problem,problem,problem]) ?_> .Error("ODE DormandPrince input evidence budget exceeded");
+    {@ attempt=1;attempt<=@maxAttempts&&@time!=@end&&@stop==_;{;
+        stepSize=@direction*.Min(OdeMagnitude(@h),OdeMagnitude(@end-@time));
+        proposal=OdeDormandPrinceAttempt(@problem,@time,@state,stepSize,@first);
+        proposal[:ok] ?: {;
+        step=@proposal[:step];@evaluations+=step[:rhsEvaluations];
+        accepted=step[:estimate]<=@tolerance;
+        nextAttempts=@attempts.Push({= tStart=@time,tEnd=@time+@stepSize,accepted=accepted,localErrorEstimate=step[:estimate],rhsEvaluations=step[:rhsEvaluations] });
+        nextTime=@time+@stepSize;
+        nextSegments=accepted ?: @segments.Push(OdeDenseSegment(:dormandPrince54,@segments.Len()+1,@time,nextTime,@state,step[:next],
+            {= order=5,embeddedOrder=4,slopes=step[:slopes],embeddedState=step[:embedded],localErrorEstimate=step[:estimate],estimator=:dormandPrince54 })) ?_ @segments;
+        nextPoints=accepted ?: @points.Push([nextTime,step[:next]]) ?_ @points;
+        candidate=[@problem,nextAttempts,nextSegments,nextPoints];
+        OdeFitsClaim([candidate,candidate]) ?: {;
+            @attempts~=@nextAttempts;
+            @accepted ?: {;
+                @segments~=@nextSegments;@time~=@nextTime;@state~=@step[:next];@points~=@nextPoints;@first~=@step[:slopes][7];
+                @step[:estimate]<=@tolerance/32 ?: {; @h~=@direction*.Min(2*OdeMagnitude(@stepSize),@maximumStep); } ?_ _;
+            } ?_ {;
+                @rejected+=1;@first~=@step[:slopes][1];@h~=@stepSize/2;
+                @rejected>=@maxRejected ?: {; @stop~=:rejectionBudgetExhausted; } ?_ (OdeMagnitude(@h)<@minimumStep ?: {; @stop~=:minimumStepReached; } ?_ _);
+            };
+        } ?_ {; @stop~=:evidenceBudgetExceeded; };
+        } ?_ {; @stop~=:rhsOrArithmeticBudgetFailure;
+            @attempts~=@attempts.Push({= tStart=@time,tEnd=@time+@stepSize,accepted=_,reason=:rhsOrArithmeticBudgetFailure,rhsEvaluations=_ }); };
+    };attempt+=1};
+    complete=time==end;
+    solution={= valueKind=:odeSolution,schema="rix.ode.solution@1",problem=problem,method=:dormandPrince54,
+        status=complete ?: :approximate ?_ :partial,classification=complete ?: :embeddedRKTrajectory ?_ :embeddedRKBudgetExhausted,
+        stateNames=problem[:stateNames],interval=problem[:interval],coveredInterval=start:time,points=points,segments=segments,
+        finalState=complete ?: state ?_ _,certified=_,evidenceLevel=:observed,
+        unresolved=complete ?: [] ?_ [{= interval=time:end,state=state,reason=stop==_ ?: :attemptBudgetExhausted ?_ stop }],
+        errorModel={= localEstimate=:embeddedDifference,formalOrder=5,embeddedOrder=4,globalEstimate=:notCertified,denseOutput=:linearInterpolation },
+        work={= acceptedSteps=segments.Len(),rejectedSteps=rejected,attemptedSteps=attempts.Len(),attempts=attempts,
+            rhsEvaluations=evaluations,firstSameAsLast=1,maxAttempts=maxAttempts,maxRejected=maxRejected,minimumStep=minimumStep,
+            stopReason=complete ?: _ ?_ stop==_ ?: :attemptBudgetExhausted ?_ stop,exhausted=!complete },
+        diagnostics=complete ?: [:approximateLocalEstimateNotGlobalCertificate] ?_ [:approximateLocalEstimateNotGlobalCertificate,:partialTrajectory] };
+    solution.={= _proto=@odeSolutionProto };.ImmutableValue(solution);
 };
 
 OdeRangeResult(expression, problem, timeRange, stateRanges, maxSubintervals) -> {;
@@ -22903,7 +25249,7 @@ OdeValidatedPicard(problemValue, options ?= {= }) -> {;
         },
         diagnostics=complete ?: [] ?_ [:validatedTrajectoryPartial]
     };
-    solution .= {= _proto=odeSolutionProto };
+    solution .= {= _proto=@odeSolutionProto };
     solution = .ImmutableValue(solution);
     solution;
 };
@@ -22916,9 +25262,9 @@ OdeCheckedPartial(expression, variable, label, options ?= {= }) -> {;
     derivative;
 };
 
-OdeTotalDerivative(expression, problem, label, options ?= {= }) -> {;
+OdeTotalDerivative(expression, problem, label, options ?= {= }, knownStatePartials ?= _) -> {;
     timeDerivative = OdeCheckedPartial(expression,problem[:independent],@"time @{label}",options);
-    stateDerivatives = problem[:stateNames].Map((name)->
+    stateDerivatives = knownStatePartials!=_ ?: knownStatePartials ?_ problem[:stateNames].Map((name)->
         OdeCheckedPartial(@expression,name,@"state @{label}",@options)
     );
     total = stateDerivatives.Reduce((sum,derivative,index)->
@@ -22941,6 +25287,33 @@ OdeTotalDerivative(expression, problem, label, options ?= {= }) -> {;
     };
 };
 
+OdePrepareTaylor(problemValue,options ?= {= }) -> {;
+    problem=OdeRequireProblem(problemValue);
+    .ValidatedClaimEqual(problem,problem);
+    maxOrder=OdeRequirePositiveInteger(OdeOption(options,"maxorder",8),"ODE maxOrder",9007199254740991);
+    order=OdeRequirePositiveInteger(OdeOption(options,"order",4),"ODE order",maxOrder);
+    order>=2 ?_> .Error("ODE Taylor order must be at least two");
+    maxWork=OdeRequirePositiveInteger(OdeOption(options,"maxconstructionwork",4096),"ODE maxConstructionWork",65536);
+    requested=problem[:dimension]^2+(order-1)*problem[:dimension]*(problem[:dimension]+1);
+    requested<=maxWork ?_> .Error("ODE derivative construction work budget exceeded");
+    derivativeOptions=OdeRequireOptions(OdeOption(options,"derivativeoptions",{= }),"ODE derivativeOptions");
+    reuse=OdeOption(options,"cachederivatives",1);
+    stateDerivatives=problem[:rhs].Map((expression)->problem[:stateNames].Map((name)->OdeCheckedPartial(expression,name,"Picard state",@derivativeOptions)));
+    secondDerivatives=problem[:rhs].Map((expression,index)->OdeTotalDerivative(expression,@problem,"right-hand side",@derivativeOptions,@reuse ?: @stateDerivatives[index] ?_ _));
+    derivativeRows:=[problem[:rhs],secondDerivatives.Map((derivative)->derivative[:expression])];
+    evidence:=[secondDerivatives];
+    {@ power=3;power<=@order;{;
+        row=@derivativeRows[@derivativeRows.Len()].Map((expression)->OdeTotalDerivative(expression,@problem,"higher order",@derivativeOptions));
+        @derivativeRows~=@derivativeRows.Push(row.Map((derivative)->derivative[:expression]));@evidence~=@evidence.Push(row);
+    };power+=1};
+    reused=reuse ?: problem[:dimension]^2 ?_ 0;
+    .ImmutableValue({= schema="rix.ode.taylor-construction@1",problem=problem,order=order,
+        stateJacobian=stateDerivatives,totalRhsDerivative=secondDerivatives,derivativeRows=derivativeRows,higherDerivatives=evidence,
+        work={= requestedPartials=requested,maxConstructionWork=maxWork,cacheEnabled=reuse,cacheKind=:reusePicardJacobian,
+            partialRequests=requested,partialComputed=requested-reused,partialCacheHits=reused,
+            totalComputed=(order-1)*problem[:dimension],simplificationChecks=(order-1)*problem[:dimension],exhausted=_ } });
+};
+
 OdeIntersectIntervals(left, right, label) -> {;
     left.Overlaps(right)
       ?: _
@@ -22958,11 +25331,74 @@ OdeTaylorStateRange(segment, timeRange) -> {;
     raw.Map((entry,axis)->OdeIntersectIntervals(entry,segment[:tube][axis],"Taylor state"));
 };
 
+OdeChoose(n,k) -> .Factorial(n)/(.Factorial(k)*.Factorial(n-k));
+OdePolynomialHorner(coefficients,argument) -> {;
+    value:=0:0;
+    {@ index=@coefficients.Len();index>=1;{; @value~=@coefficients[index]+@argument*@value; };index-=1};value;
+};
+OdeIntervalHull(values) -> values.Reduce((result,entry)->.Min(result.Low(),entry.Low()):.Max(result.High(),entry.High()),values[1]);
+OdeTimePolynomialRange(coefficientsValue,domainValue,options ?= {= }) -> {;
+    .ValidatedClaimEqual([coefficientsValue,domainValue,options],[coefficientsValue,domainValue,options]);
+    coefficients=coefficientsValue.Map((value)->OdeAsInterval(value,"ODE time-model coefficient"));
+    coefficients.Len()>0&&coefficients.Len()<=128 ?_> .Error("ODE time-model coefficient count must be between 1 and 128");
+    domain=OdeAsInterval(domainValue,"ODE time-model domain");
+    mode=OdeOption(options,"mode",:polynomial);
+    mode==:polynomial||mode==:affine ?_> .Error("ODE dependency mode must be :polynomial or :affine");
+    maximum=OdeRequirePositiveInteger(OdeOption(options,"maxterms",32),"ODE maxModelTerms",128);
+    subdivisions=OdeRequirePositiveInteger(OdeOption(options,"subintervals",1),"ODE modelSubintervals",16);
+    natural=OdePolynomialHorner(coefficients,domain);
+    .ValidatedClaimEqual(natural,natural);
+    input={= coefficients=coefficients,domain=domain,options=options };
+    coefficients.Len()<=maximum ?_> {= schema="rix.ode.time-polynomial-range@1",status=:budgetExceeded,range=natural,certified=1,
+        applied=_,mode=mode,partitions=[],input=input,work={= maxTerms=maximum,subintervals=0,exhausted=1 },reason=:modelTermBudgetExceeded };
+    degree=coefficients.Len()-1;partitions:=[];
+    {@ cell=1;cell<=@subdivisions;{;
+        low=@domain.Low()+(@domain.High()-@domain.Low())*(cell-1)/@subdivisions;
+        high=@domain.Low()+(@domain.High()-@domain.Low())*cell/@subdivisions;
+        cellRange:=_;data:=_;
+        @mode==:affine ?: {;
+            center=(@low+@high)/2;centerValue=OdePolynomialHorner(@coefficients,center:center);
+            derivative=@coefficients.DropFirst().Map((value,index)->value*index);
+            slope=derivative.Len()==0 ?: (0:0) ?_ OdePolynomialHorner(derivative,@low:@high);
+            @cellRange~=centerValue+((@low:@high)-(center:center))*slope;
+            @data~={= center=center,value=centerValue,slope=slope };
+        } ?_ {;
+            power:=[];
+            {@ j=0;j<=@degree;{;
+                sum:=0:0;
+                {@ k:=@j;k<=@degree;{;
+                    shift=k==@j ?: 1 ?_ @low^(k-@j);scale=@j==0 ?: 1 ?_ (@high-@low)^@j;
+                    @sum+=@coefficients[k+1]*OdeChoose(k,@j)*shift*scale;
+                };k+=1};
+                @power~=@power.Push(sum);
+            };j+=1};
+            bernstein:=[];
+            {@ i=0;i<=@degree;{;
+                sum:=0:0;
+                {@ j=0;j<=@i;{; @sum+=@power[j+1]*OdeChoose(@i,j)/OdeChoose(@degree,j); };j+=1};
+                @bernstein~=@bernstein.Push(sum);
+            };i+=1};
+            @cellRange~=OdeIntervalHull(bernstein);@data~={= shiftedPowerCoefficients=power,bernsteinCoefficients=bernstein };
+        };
+        @partitions~=@partitions.Push({= interval=low:high,range=cellRange,evidence=data });
+    };cell+=1};
+    range=OdeIntersectIntervals(OdeIntervalHull(partitions.Map((part)->part[:range])),natural,"dependency model");
+    result={= schema="rix.ode.time-polynomial-range@1",status=:enclosed,range=range,certified=1,applied=1,mode=mode,
+        partitions=partitions,input=input,work={= maxTerms=maximum,subintervals=subdivisions,exhausted=_ },
+        theorem=mode==:polynomial ?: :intervalCoefficientBernsteinHull ?_ :intervalCoefficientMeanValue };
+    .ValidatedClaimEqual(result,result);.ImmutableValue(result);
+};
+OdeCheckTimePolynomialRange(value) -> .ValidatedClaimEqual(value,OdeTimePolynomialRange(value[:input][:coefficients],value[:input][:domain],value[:input][:options]));
+
 OdeTaylorPolynomialRange(segment, delta) -> {;
     raw = segment[:stateStart].Map((entry,axis)->
         segment[:taylorCoefficients].Reduce((sum,row,power)->sum+(delta^power)*row[axis],entry)
     );
-    raw.Map((entry,axis)->OdeIntersectIntervals(entry,segment[:tube][axis],"Taylor state"));
+    mode=OdeOption(segment,"dependencymodel",:interval);
+    modelOptions={= mode=mode,maxTerms=OdeOption(segment,"maxmodelterms",32),subintervals=OdeOption(segment,"modelsubintervals",1) };
+    controlled=mode==:interval ?: raw ?_ raw.Map((entry,axis)->OdeIntersectIntervals(entry,
+        OdeTimePolynomialRange([@segment[:stateStart][axis]].Concat(@segment[:taylorCoefficients].Map((row)->row[@axis])),@delta,@modelOptions)[:range],"time dependency"));
+    controlled.Map((entry,axis)->OdeIntersectIntervals(entry,segment[:tube][axis],"Taylor state"));
 };
 
 OdeTaylorizeOrder(problem, segment, derivatives, identities, rangeOptions, order) -> {;
@@ -22980,20 +25416,26 @@ OdeTaylorizeOrder(problem, segment, derivatives, identities, rangeOptions, order
         @coefficients ~= @coefficients.Push(@ranges[power].Map((result)->result[:interval]/@factorial));
     }; power+=1 };
     h = segment[:tEnd]-segment[:tStart];
-    model = segment.Merge({= taylorCoefficients=coefficients });
+    mode=OdeOption(rangeOptions,"dependencymodel",:interval);
+    mode==:interval||mode==:affine||mode==:polynomial ?_> .Error("ODE dependencyModel must be :interval, :affine or :polynomial");
+    maxModelTerms=OdeRequirePositiveInteger(OdeOption(rangeOptions,"maxmodelterms",32),"ODE maxModelTerms",128);
+    modelSubintervals=OdeRequirePositiveInteger(OdeOption(rangeOptions,"modelsubintervals",1),"ODE modelSubintervals",16);
+    model = segment.Merge({= taylorCoefficients=coefficients,dependencyModel=mode,maxModelTerms=maxModelTerms,modelSubintervals=modelSubintervals });
+    models=mode==:interval ?: [] ?_ segment[:stateStart].Map((value,axis)->OdeTimePolynomialRange(
+        [value].Concat(@coefficients.Map((row)->row[@axis])),0:@h,{= mode=@mode,maxTerms=@maxModelTerms,subintervals=@modelSubintervals }));
     endpoint = OdeTaylorPolynomialRange(model,h:h).Map((entry,axis)->
         OdeIntersectIntervals(entry,segment[:stateEnd][axis],"Taylor endpoint")
     );
     tube = OdeTaylorPolynomialRange(model,0:h);
     .ImmutableValue(model.Merge({=
         segmentKind=:validatedTaylorTube,method=:validatedTaylor,
-        interpolation=:higherOrderTaylorInterval,order=order,
+        interpolation=:higherOrderTaylorInterval,order=order,dependencyModels=models,
         stateEnd=endpoint,tube=tube,picardTube=segment[:tube],
         remainderBound=coefficients[order].Reduce((largest,range)->.Max(largest,OdeIntervalMagnitude(range)*OdeMagnitude(h)^order),0),
         evidence={= theorem=:higherOrderTaylorRemainderInsidePicardTube,
             existenceAndUniqueness=segment[:evidence],
             derivativeRanges=ranges.Map((row)->row.Map((result)->result[:evidence])),
-            totalDerivativeIdentities=identities,
+            totalDerivativeIdentities=identities,dependencyModels=models,
             order=order,endpointIntersection=1,tubeIntersection=1 }
     }));
 };
@@ -23088,20 +25530,13 @@ OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _, general ?= _) 
     );
     tubeRadiusValue = OdeOption(options,"tuberadius",_);
     tubeRadius = tubeRadiusValue == _ ?: _ ?_ OdeRequirePositiveRational(tubeRadiusValue,"ODE tubeRadius");
-    stateDerivatives = problem[:rhs].Map((expression)->problem[:stateNames].Map((name)->
-        OdeCheckedPartial(expression,name,"Picard state",@derivativeOptions)
-    ));
-    secondDerivatives = problem[:rhs].Map((expression,index)->
-        OdeTotalDerivative(expression,@problem,@"right-hand side @{index}",@derivativeOptions)
-    );
-    derivativeRows := [problem[:rhs],secondDerivatives.Map((derivative)->derivative[:expression])];
-    derivativeEvidence := [secondDerivatives];
-    {@ power=3; power<=@order; {;
-        row = @derivativeRows[@derivativeRows.Len()].Map((expression)->OdeTotalDerivative(expression,@problem,"higher order",@derivativeOptions));
-        @derivativeRows ~= @derivativeRows.Push(row.Map((derivative)->derivative[:expression]));
-        @derivativeEvidence ~= @derivativeEvidence.Push(row);
-    }; power+=1 };
-    rangeOptions = OdeRequireOptions(OdeOption(options,"rangeoptions",{= }),"ODE rangeOptions").Merge({= maxSubintervals=maxSubintervals });
+    construction=OdePrepareTaylor(problem,options.Merge({= order=order }));
+    stateDerivatives=construction[:stateJacobian];
+    secondDerivatives=construction[:totalRhsDerivative];
+    derivativeRows=construction[:derivativeRows];
+    derivativeEvidence=construction[:higherDerivatives];
+    rangeOptions = OdeRequireOptions(OdeOption(options,"rangeoptions",{= }),"ODE rangeOptions").Merge({= maxSubintervals=maxSubintervals,
+        dependencyModel=OdeOption(options,"dependencymodel",:interval),maxModelTerms=OdeOption(options,"maxmodelterms",32),modelSubintervals=OdeOption(options,"modelsubintervals",1) });
     normalized = {=
         maxTubeIterations=maxTubeIterations,
         maxSubintervals=rangeOptions,
@@ -23180,7 +25615,8 @@ OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _, general ?= _) 
             kind=general ?: :higherOrderTaylorRecentering ?_ :secondOrderTaylorRecentering,
             order=order,
             baseExistenceTube=:validatedPicard,
-            affineArithmetic=_
+            dependencyModel=general ?: OdeOption(rangeOptions,"dependencymodel",:interval) ?_ :interval,
+            stateCorrelationPreserved=_,affineArithmetic=_
         },
         work={=
             requestedSteps=steps,
@@ -23192,13 +25628,13 @@ OdeValidatedTaylor2(problemValue, options ?= {= }, adaptive ?= _, general ?= _) 
             maxAttempts=maxAttempts,
             minimumStep=minimumStep,
             remainderTolerance=remainderTolerance,
-            order=order,maxOrder=maxOrder,rangeOptions=rangeOptions,derivativeOptions=derivativeOptions,
+            construction=construction[:work],order=order,maxOrder=maxOrder,rangeOptions=rangeOptions,derivativeOptions=derivativeOptions,
             stopReason=complete ?: _ ?_ stopReason,
             exhausted=!complete
         },
         diagnostics=complete ?: [] ?_ [:validatedTaylorTrajectoryPartial]
     };
-    solution .= {= _proto=odeSolutionProto };
+    solution .= {= _proto=@odeSolutionProto };
     .ImmutableValue(solution);
 };
 
@@ -23523,9 +25959,9 @@ OdeEventCandidates(solution, event, options) -> {;
         certifiedCandidates=candidates.Filter((candidate)->candidate[:certified]==1).Len(),
         certified=(candidates.Len()>0 && candidates.Filter((candidate)->candidate[:certified]==1).Len()==candidates.Len())
           ?: 1 ?_ _,
-        evidenceLevel=candidates.Len()>0 && candidates.Filter((candidate)->candidate[:certified]==1).Len()==candidates.Len()
+        evidenceLevel=(candidates.Len()>0 && candidates.Filter((candidate)->candidate[:certified]==1).Len()==candidates.Len())
           ?: :proof
-          ?_ (candidates.Len()==0 && exclusions.Len()>0 ?: :partialProof ?_ :observed)
+          ?_ ((candidates.Len()==0 && exclusions.Len()>0) ?: :partialProof ?_ :observed)
     });
 };
 
@@ -23547,7 +25983,217 @@ OdeRecord(value) ->
            ?: value
            ?_ .Error("ODE Record expects a problem or solution"));
 
+## Bounded polynomial graph substitution is simultaneous and name-based.
+## Scoped symbols and transcendental/variable-denominator RHS stay unsupported.
+OdePolynomialGraph(expression,bindings ?= {= },depth ?= 0) -> {;
+    depth<=32 ?_> .Error("ODE polynomial graph depth budget exceeded");
+    kind=expression[:kind];
+    kind==:constant ?: {;
+        @expression[:value] ~!: :Rational;@expression;
+    } ?_ (kind==:variable ?: {;
+        {= }.Merge(@expression).Has("symbolid")==_ ?: _ ?_ .Error("ODE polynomial recognition requires name-based variables");
+        @bindings.Has(@expression[:name]) ?: @bindings[@expression[:name]] ?_ @expression;
+    } ?_ {;
+        @kind==:operator ?: _ ?_ .Error("ODE polynomial recognition does not support this graph kind");
+        operation=@expression[:operation]; operands=@expression[:operands];
+        allowed=[:add,:subtract,:multiply,:negate].Includes(operation);
+        operation==:divide ?: {;
+            denominator=@operands[2];
+            (denominator[:kind]==:constant && denominator[:value]!=0) ?: _ ?_ .Error("ODE polynomial division requires a nonzero constant denominator");
+            @allowed~=1;
+        } ?_ _;
+        operation==:power ?: {;
+            exponent=@operands[2];
+            (exponent[:kind]==:constant && exponent[:value]>=0 && exponent[:value]<=16 && exponent[:value]//1==exponent[:value])
+                ?: _ ?_ .Error("ODE polynomial exponent must be an Integer from zero through 16");
+            @allowed~=1;
+        } ?_ _;
+        allowed ?: _ ?_ .Error("ODE polynomial operation is unsupported");
+        .ExpressionOperation(operation,operands.Map((child)->OdePolynomialGraph(child,@bindings,@depth+1)));
+    });
+};
+OdeSimplifyChecked(expression) -> {;
+    proof=.numerics.SimplifyGraph(expression);
+    .numerics.CheckGraphSimplification(proof)[:accepted]==1 ?_> .Error("ODE simplification replay failed");proof;
+};
+OdeFoldPolynomial(expression) -> {;
+    expression[:kind]!=:constant ?_> expression[:value];
+    expression[:kind]!=:variable ?_> _;
+    operation=expression[:operation];values=expression[:operands].Map((child)->OdeFoldPolynomial(child));
+    operation!=:multiply || (values[1]!=0 && values[2]!=0) ?_> 0;
+    operation!=:power || values[2]!=0 ?_> 1;
+    values[1]!=_ ?_> _;
+    operation!=:negate ?_> -values[1];
+    values[2]!=_ ?_> _;
+    operation!=:add ?_> values[1]+values[2];
+    operation!=:subtract ?_> values[1]-values[2];
+    operation!=:multiply ?_> values[1]*values[2];
+    operation!=:divide ?_> values[1]/values[2];
+    values[1]^values[2];
+};
+OdeConstantGraph(expression) -> {;
+    polynomial=OdePolynomialGraph(expression);
+    value=OdeFoldPolynomial(polynomial);
+    value!=_ ?: _ ?_ .Error("ODE expected a constant polynomial derivative");
+    {= value=value ~!: :Rational,proof={= theorem=:totalPolynomialConstantFolding,expression=polynomial,value=value } };
+};
+OdeHigherOrder(rhs,initialTime,initialDerivatives,interval,options ?= {= }) -> {;
+    initialDerivatives ? :Array ?_> .Error("ODE higher-order initial derivatives must be an Array");
+    order=OdeRequirePositiveInteger(initialDerivatives.Len(),"ODE higher-order order",16);
+    names=OdeNormalizeNames(OdeOption(options,"statenames",order==1 ?: [:y] ?_ _),order);
+    .calculus.IsExpression(rhs) ?_> .Error("ODE higher-order RHS must be a Calculus expression");
+    .ValidatedClaimEqual([rhs,initialDerivatives,options],[rhs,initialDerivatives,options]);
+    vector=names.DropFirst().Map((name)->.calculus.Variable(name)).Push(rhs);
+    problem=OdeIVP(vector,initialTime,initialDerivatives,interval,options.Merge({= stateNames=names }));
+    .ImmutableValue({= schema="rix.ode.higher-order@1",order=order,rhs=rhs,problem=problem,
+        initialDerivatives=initialDerivatives,stateNames=names,
+        correspondence=names.Map((name,index)->{= state=name,derivativeOrder=index-1 }),
+        evidence={= rule=:successiveDerivativeCoordinates,firstOrderRhs=vector } });
+};
+OdeReduceHigherOrder(record) -> {;
+    record[:schema]=="rix.ode.higher-order@1" ?_> .Error("ODE ReduceHigherOrder expects a higher-order record");
+    original=record[:problem];
+    expected=OdeHigherOrder(record[:rhs],original[:initialTime],record[:initialDerivatives],original[:interval],
+        {= stateNames=original[:stateNames],independent=original[:independent],parameters=original[:parameters],units=original[:units],events=original[:events],assumptions=original[:assumptions] });
+    .ValidatedClaimEqual(record,expected) ?_> .Error("ODE higher-order reduction evidence changed");original;
+};
+OdeExactRecognized(problem) -> {;
+    problem[:dimension]==1 ?: _ ?_ .Error("Exact scalar recognition requires one state");
+    initial=OdeRequirePointState(problem,:exact)[1];
+    parameters=problem[:parameters].MapValues((value)->.calculus.Constant(value));
+    rhs=OdePolynomialGraph(problem[:rhs][1],parameters);
+    dy=OdeCheckedPartial(rhs,problem[:stateNames][1],"exact affine state");
+    dt=OdeCheckedPartial(rhs,problem[:independent],"exact affine time");
+    a=OdeConstantGraph(dy[:expression]); b=OdeConstantGraph(dt[:expression]);
+    zeroBindings=OdeBindings(problem,0,[0]);c=.calculus.Evaluate(rhs,zeroBindings) ~!: :Rational;
+    t=.calculus.Variable(problem[:independent]);t0=problem[:initialTime];
+    formula:=_;coefficients:=_;
+    a[:value]==0 ?: {;
+        @formula~=.calculus.Constant(@initial)+@b[:value]*(@t^2-@t0^2)/2+@c*(@t-@t0);
+        @coefficients~={= initial=@initial,timeLinear=@c,timeQuadratic=@b[:value]/2 };
+    } ?_ {;
+        rate=@a[:value];constant=@initial+(@b[:value]*@t0+@c)/rate+@b[:value]/rate^2;
+        linear=-@b[:value]/rate;offset=-@c/rate-@b[:value]/rate^2;
+        constant+linear*@t0+offset==@initial && rate*linear+@b[:value]==0 && rate*offset+@c==linear
+          ?_> .Error("ODE exact affine coefficient verification failed");
+        @formula~=.calculus.Exp()(rate*(@t-@t0))*constant+linear*@t+offset;
+        @coefficients~={= exponential=constant,timeLinear=linear,offset=offset,rate=rate };
+    };
+    .ImmutableValue({= schema="rix.ode.exact-solution@1",problem=problem,status=:exact,certified=1,
+        expression=formula,family=a[:value]==0 ?: :constantOrTimeAffine ?_ :scalarAffineLinear,
+        coefficients=coefficients,evidence={= theorem=:affineLinearClosedForm,polynomialRhs=rhs,
+            statePartial=dy,timePartial=dt,stateConstant=a,timeConstant=b,constant=c,initial=initial } });
+};
+OdeExactAttempt={>
+    (problem) ?- [result=OdeExactRecognized(problem)] -> result,
+    (problem) -> .ImmutableValue({= schema="rix.ode.exact-solution@1",problem=problem,status=:unsupported,certified=_,reason=:notRecognizedGlobalScalarAffinePolynomial })
+};
+OdeExact(problem) -> {; .ValidatedClaimEqual(problem,problem);OdeExactAttempt(OdeRequireProblem(problem)); };
+OdeCheckExact(record) -> .ValidatedClaimEqual(record,OdeExact(record[:problem]));
+OdeExactAt(record,time,options ?= {= }) -> {;
+    OdeCheckExact(record) && record[:certified]==1 ?_> .Error("ODE ExactAt requires a replayed exact solution");
+    domain=OdeAsInterval(time,"ODE exact query");
+    record[:problem][:interval].Contains(domain) ?_> .Error("ODE exact query is outside the problem interval");
+    .numerics.GraphRange(record[:expression],{= }.Set(record[:problem][:independent],domain),options);
+};
+
+OdeBVP(rhs,initialTime,initialExpressions,interval,residuals,shootingBox,options ?= {= }) -> {;
+    initials=OdeNormalizeExpressions(initialExpressions);equations=OdeNormalizeExpressions(residuals);
+    box=.numerics.Box(shootingBox); variables=box[:variables];
+    variables.Len()==equations.Len() ?_> .Error("ODE shooting requires one boundary residual per shooting parameter");
+    parameters=OdeOption(options,"parameters",{= });
+    .ValidatedClaimEqual([rhs,initials,equations,shootingBox,options],[rhs,initials,equations,shootingBox,options]);
+    bounds=initials.Map((expression)->.numerics.GraphRange(expression,shootingBox));
+    _ := bounds.Map((bound)->bound[:certified]==1 ?_> .Error("ODE could not enclose the initial shooting family"));
+    problem=OdeIVP(rhs,initialTime,bounds.Map((bound)->bound[:interval]),interval,options);
+    _ := variables.Map((name)->@problem[:stateNames].Includes(name)==_ && name!=@problem[:independent] && @parameters.Has(name)==_
+      ?_> .Error("ODE shooting parameters must differ from time, states and fixed parameters"));
+    .ValidatedClaimEqual([problem,initials,equations,shootingBox],[problem,initials,equations,shootingBox]);
+    .ImmutableValue({= schema="rix.ode.boundary-problem@1",problem=problem,initialExpressions=initials,
+        residuals=equations,shootingBox=shootingBox,variables=variables,initialBounds=bounds,
+        interpretation=:terminalResidualsOfParameterizedInitialStates });
+};
+OdeShootingMap(bvp,options) -> {;
+    problem=bvp[:problem];
+    _ := problem[:rhs].Map((rhs)->OdePolynomialGraph(rhs));
+    _ := bvp[:initialExpressions].Map((rhs)->OdePolynomialGraph(rhs));_ := bvp[:residuals].Map((rhs)->OdePolynomialGraph(rhs));
+    order=OdeRequirePositiveInteger(OdeOption(options,"order",4),"ODE shooting Taylor order",8);
+    construction=OdePrepareTaylor(problem,{= order=order,maxConstructionWork=OdeOption(options,"maxconstructionwork",4096) });
+    last=construction[:derivativeRows][order].Map((expression)->OdeConstantGraph(expression));
+    _ := last.Map((entry)->entry[:value]==0 ?: _ ?_ .Error("ODE terminal map has a nonzero Taylor remainder"));
+    replacements:=problem[:parameters].MapValues((value)->.calculus.Constant(value)).Set(problem[:independent],.calculus.Constant(problem[:initialTime]));
+    {@ axis=1;axis<=@problem[:dimension];{; @replacements~=@replacements.Set(@problem[:stateNames][axis],@bvp[:initialExpressions][axis]); };axis+=1};
+    h=problem[:interval].End()-problem[:initialTime];
+    terminal=bvp[:initialExpressions].Map((initial,axis)->construction[:derivativeRows].Reduce((sum,row,power)->
+        sum+OdePolynomialGraph(row[@axis],@replacements)*@h^power/.Factorial(power),initial));
+    terminal=terminal.Map((expression)->OdeSimplifyChecked(expression)[:expression]);
+    substitutions:=problem[:parameters].MapValues((value)->.calculus.Constant(value)).Set(problem[:independent],.calculus.Constant(problem[:interval].End()));
+    {@ axis=1;axis<=@problem[:dimension];{; @substitutions~=@substitutions.Set(@problem[:stateNames][axis],@terminal[axis]); };axis+=1};
+    residuals=bvp[:residuals].Map((expression)->OdeSimplifyChecked(OdePolynomialGraph(expression,@substitutions))[:expression]);
+    jacobian=.calculus.JacobianResult(residuals,bvp[:variables]);
+    {= terminal=terminal,residuals=residuals,jacobian=jacobian,construction=construction,
+        evidence={= theorem=:globallyTerminatingPolynomialLieSeries,zeroRemainder=last,order=order } };
+};
+OdeShootingMapAttempt={>
+    (bvp,options) ?- [result=OdeShootingMap(bvp,options)] -> {= ok=1,result=result },
+    (bvp,options) -> {= ok=_,reason=:unprovedTerminalMap }
+};
+OdeFitsClaim={>
+    (value) ?- [ok=.ValidatedClaimEqual(value,value)] -> 1,
+    (value) -> _
+};
+OdeShootingUnresolved(bvp,options,reason) -> .ImmutableValue({= schema="rix.ode.shooting-result@1",problem=bvp,options=options,status=:unresolved,certified=_,
+    unique=[],excluded=[],pending=[],unresolved=[{= box=bvp[:shootingBox],reason=reason }],trajectories=[],diagnostics=[reason],interpretation=:parameterFamilyOnly });
+OdeShoot(bvp,options ?= {= }) -> {;
+    bvp[:schema]=="rix.ode.boundary-problem@1" ?_> .Error("ODE Shoot expects a boundary-problem record");
+    .ValidatedClaimEqual([bvp,bvp,bvp,bvp],[bvp,bvp,bvp,bvp]);
+    base=bvp[:problem];
+    expected=OdeBVP(base[:rhs],base[:initialTime],bvp[:initialExpressions],base[:interval],bvp[:residuals],bvp[:shootingBox],
+        {= stateNames=base[:stateNames],independent=base[:independent],parameters=base[:parameters],units=base[:units],events=base[:events],assumptions=base[:assumptions] });
+    .ValidatedClaimEqual(bvp,expected) ?_> .Error("ODE boundary-problem evidence changed");
+    options=OdeRequireOptions(options,"ODE shooting options");
+    base[:dimension]<=8 ?_> .Error("ODE shooting supports at most eight state coordinates");
+    boxOptions=OdeRequireOptions(OdeOption(options,"boxoptions",{= maxBoxes=63 }),"ODE shooting boxOptions");
+    OdeRequirePositiveInteger(OdeOption(boxOptions,"maxboxes",63),"ODE shooting maxBoxes",256);
+    flowOptions=OdeRequireOptions(OdeOption(options,"flowoptions",{= order=3,steps=8,maxSubintervals=1 }),"ODE shooting flowOptions");
+    OdeRequirePositiveInteger(OdeOption(flowOptions,"order",4),"ODE shooting flow order",8);
+    OdeRequirePositiveInteger(OdeOption(flowOptions,"steps",4),"ODE shooting flow steps",256);
+    OdeRequirePositiveInteger(OdeOption(flowOptions,"maxtubeiterations",8),"ODE shooting tube iterations",32);
+    OdeRequirePositiveInteger(OdeOption(flowOptions,"maxsubintervals",4),"ODE shooting range subdivisions",32);
+    maxTrajectories=OdeRequirePositiveInteger(OdeOption(options,"maxtrajectories",8),"ODE maxTrajectories",16);
+    mapping=OdeShootingMapAttempt(bvp,options);
+    mapping[:ok] ?_> OdeShootingUnresolved(bvp,options,:unprovedTerminalMap);
+    exact=mapping[:result];
+    subdivision=.numerics.SubdivideBoxes(exact[:residuals],exact[:jacobian],bvp[:shootingBox],boxOptions);
+    .numerics.CheckBoxSubdivision(subdivision)[:accepted]==1 ?_> .Error("ODE shooting box replay failed");
+    retained={= schema="rix.ode.shooting-result@1",problem=bvp,options=options,
+        status=subdivision[:unresolved].Len()==0 ?: :classified ?_ :partial,certified=subdivision[:certified],
+        unique=subdivision[:unique],excluded=subdivision[:excluded],unresolved=subdivision[:unresolved],pending=subdivision[:pending],
+        terminalMap=exact,subdivision=subdivision,interpretation=:parameterFamilyOnly };
+    OdeFitsClaim([retained,retained]) ?_> OdeShootingUnresolved(bvp,options,:evidenceBudgetExceeded);
+    trajectories:=[];evidenceFull:=_;
+    {@ index=1;index<=.Min(@maxTrajectories,@subdivision[:unique].Len())&&@evidenceFull==_;{;
+        branch=@subdivision[:unique][index];
+        bindings=branch[:box][:axes];
+        initial=@bvp[:initialExpressions].Map((expression)->.numerics.GraphRange(expression,@bindings)[:interval]);
+        branchProblem=@bvp[:problem];
+        ivp=OdeIVP(branchProblem[:rhs],branchProblem[:initialTime],initial,branchProblem[:interval],{= stateNames=branchProblem[:stateNames],independent=branchProblem[:independent],parameters=branchProblem[:parameters] });
+        flow=OdeValidatedTaylor2(ivp,@flowOptions,_,1);
+        candidate=@trajectories.Push({= branchId=branch[:id],parameterBox=branch[:box],flow=flow });
+        OdeFitsClaim([@retained,@retained,candidate,candidate])
+          ?: {; @trajectories~=@candidate; } ?_ {; @evidenceFull~=1; };
+    };index+=1};
+    result=retained.Merge({= trajectories=trajectories,
+        diagnostics=evidenceFull ?: [:trajectoryEvidenceBudgetExceeded] ?_ (subdivision[:unique].Len()>maxTrajectories ?: [:trajectoryBudgetExceeded] ?_ []),
+        work={= maxTrajectories=maxTrajectories,omittedTrajectories=subdivision[:unique].Len()-trajectories.Len(),evidenceBudgetExceeded=evidenceFull } });
+    .ValidatedClaimEqual(result,result);.ImmutableValue(result);
+};
+OdeCheckShooting(record) -> .ValidatedClaimEqual(record,OdeShoot(record[:problem],record[:options]));
+
 odeProblemProto = {=
+    Exact=(self)->OdeExact(self),
+    DormandPrince=(self,options ?= {= })->OdeDormandPrince(self,options),
+    PrepareTaylor=(self,options ?= {= })->OdePrepareTaylor(self,options),
     Euler=(self, options ?= {= })->OdeApproximateSolution(self,:euler,options),
     RK4=(self, options ?= {= })->OdeApproximateSolution(self,:rk4,options),
     AdaptiveRK4=(self, options ?= {= })->OdeAdaptiveRK4(self,options),
@@ -23569,6 +26215,16 @@ odeSolutionProto = {=
 
 odeNamespace = (value)->value;
 odeNamespace._proto = {=
+    HigherOrder=(self,rhs,time,initials,interval,options ?= {= })->OdeHigherOrder(rhs,time,initials,interval,options),
+    ReduceHigherOrder=(self,record)->OdeReduceHigherOrder(record),
+    Exact=(self,problem)->OdeExact(problem),CheckExact=(self,record)->OdeCheckExact(record),
+    ExactAt=(self,record,time,options ?= {= })->OdeExactAt(record,time,options),
+    BVP=(self,rhs,time,initials,interval,residuals,box,options ?= {= })->OdeBVP(rhs,time,initials,interval,residuals,box,options),
+    Shoot=(self,bvp,options ?= {= })->OdeShoot(bvp,options),CheckShooting=(self,record)->OdeCheckShooting(record),
+    TimePolynomialRange=(self,coefficients,domain,options ?= {= })->OdeTimePolynomialRange(coefficients,domain,options),
+    CheckTimePolynomialRange=(self,value)->OdeCheckTimePolynomialRange(value),
+    DormandPrince=(self,problem,options ?= {= })->OdeDormandPrince(problem,options),
+    PrepareTaylor=(self,problem,options ?= {= })->OdePrepareTaylor(problem,options),
     IVP=(self,rhs,initialTime,initialState,interval,options ?= {= })->
         OdeIVP(rhs,initialTime,initialState,interval,options),
     Euler=(self,problem,options ?= {= })->OdeApproximateSolution(problem,:euler,options),
@@ -23595,17 +26251,17 @@ odeNamespace._proto = {=
     ["Numerics","ODE","Calculus"]
 );
 `, sourcePath: "bundled:ode", kind: "rix" });
-  catalog.addMetadata({ id: "optimize", description: "Pure-RiX exact general linear programs, two-phase simplex, and checkable certificates.", kind: "rix", mount: "optimize", exports: ["LinearProgram", "Solve", "Evaluate", "Maximize", "Minimize", "FromRecord", "CheckCertificate"], groups: ["Optimization", "Exact"], permissions: [], requires: ["rix.linear-algebra@1"], provides: ["rix.optimization@2", "rix.optimization@1", "rix.linear-program@2", "rix.linear-program@1"], schemas: ["rix.optimize.linear-program@2", "rix.optimize.linear-program@1", "rix.optimize.result@2", "rix.optimize.result@1", "rix.optimize.certificate@1", "rix.optimize.sensitivity@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:optimize" }, { source: `/**
+  catalog.addMetadata({ id: "optimize", description: "Bounded exact LP/MILP, convex quadratic certificates, and global box optimization.", kind: "rix", mount: "optimize", exports: ["Nonlinear", "CheckNonlinear", "Quadratic", "SolveQuadratic", "CheckQuadratic", "MixedInteger", "CheckMixedInteger", "ResumeMixedInteger", "LinearProgram", "Solve", "Evaluate", "Maximize", "Minimize", "FromRecord", "CheckCertificate"], groups: ["Optimization", "Exact"], permissions: [], requires: ["rix.linear-algebra@1", "rix.numerics@2"], provides: ["rix.optimization@2", "rix.optimization@1", "rix.linear-program@2", "rix.linear-program@1"], schemas: ["rix.optimize.mixed-integer-result@1", "rix.optimize.quadratic-program@1", "rix.optimize.quadratic-result@1", "rix.optimize.box-result@1", "rix.optimize.linear-program@2", "rix.optimize.linear-program@1", "rix.optimize.result@2", "rix.optimize.result@1", "rix.optimize.certificate@1", "rix.optimize.sensitivity@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:optimize" }, { source: `/**
 id: optimize
-description: Pure-RiX exact general linear programs, two-phase simplex, and checkable certificates.
+description: Bounded exact LP/MILP, convex quadratic certificates, and global box optimization.
 kind: rix
 mount: optimize
-exports: [LinearProgram, Solve, Evaluate, Maximize, Minimize, FromRecord, CheckCertificate]
+exports: [Nonlinear, CheckNonlinear, Quadratic, SolveQuadratic, CheckQuadratic, MixedInteger, CheckMixedInteger, ResumeMixedInteger, LinearProgram, Solve, Evaluate, Maximize, Minimize, FromRecord, CheckCertificate]
 groups: [Optimization, Exact]
 permissions: []
-requires: [rix.linear-algebra@1]
+requires: [rix.linear-algebra@1, rix.numerics@2]
 provides: [rix.optimization@2, rix.optimization@1, rix.linear-program@2, rix.linear-program@1]
-schemas: [rix.optimize.linear-program@2, rix.optimize.linear-program@1, rix.optimize.result@2, rix.optimize.result@1, rix.optimize.certificate@1, rix.optimize.sensitivity@1]
+schemas: [rix.optimize.mixed-integer-result@1, rix.optimize.quadratic-program@1, rix.optimize.quadratic-result@1, rix.optimize.box-result@1, rix.optimize.linear-program@2, rix.optimize.linear-program@1, rix.optimize.result@2, rix.optimize.result@1, rix.optimize.certificate@1, rix.optimize.sensitivity@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -23633,7 +26289,8 @@ OptimizeVector(value, label ?= "Vector") -> {;
 OptimizeMatrix(value, label ?= "Matrix") -> {;
     (value ? :Shaped) ?: _ ?_ .Error(@"@{label} must be a rank-2 Shaped or Matrix value");
     value.Shape().Len() == 2 ?: _ ?_ .Error(@"@{label} must have rank 2");
-    shape = value.Shape();
+    matrix = value ~!: :Matrix;
+    shape = matrix.Shape();
     rowCount = shape[1];
     columnCount = shape[2];
     rowCount >= 1 && columnCount >= 1 ?: _ ?_ .Error(@"@{label} cannot be empty");
@@ -23641,16 +26298,16 @@ OptimizeMatrix(value, label ?= "Matrix") -> {;
     {@ row = 1; row <= @rowCount; {;
         entries := [];
         {@ column = 1; column <= @columnCount; {;
-            @entries ~= @entries.Push(OptimizeExact(@value[@row,column], @label));
+            @entries ~= @entries.Push(OptimizeExact(@matrix[@row,column], @label));
         }; column += 1 };
         @rows ~= @rows.Push(entries);
     }; row += 1 };
     rows;
 };
 
-OptimizeVectorTensor(values) -> values ~!: :Shaped;
+OptimizeVectorStorage(values) -> values ~!: :Shaped;
 
-OptimizeMatrixTensor(rows) -> {;
+OptimizeMatrixValue(rows) -> {;
     rowCount = rows.Len();
     columnCount = rows[1].Len();
     flat := [];
@@ -23659,7 +26316,7 @@ OptimizeMatrixTensor(rows) -> {;
             @flat ~= @flat.Push(@rows[@row][column]);
         }; column += 1 };
     }; row += 1 };
-    (flat ~!: :Shaped).Reshape({: rowCount, columnCount });
+    (flat ~!: :Shaped).Reshape({: rowCount, columnCount }) ~!: :Matrix;
 };
 
 OptimizeTranspose(rows) -> {;
@@ -23754,9 +26411,9 @@ OptimizeProgram(objective, matrix, bounds, options ?= {= }) -> {;
     program = {=
         valueKind = :linearProgram,
         schema = "rix.optimize.linear-program@2",
-        objective = OptimizeVectorTensor(exactObjective),
-        A = OptimizeMatrixTensor(exactMatrix),
-        b = OptimizeVectorTensor(exactBounds),
+        objective = OptimizeVectorStorage(exactObjective),
+        A = OptimizeMatrixValue(exactMatrix),
+        b = OptimizeVectorStorage(exactBounds),
         sense = OptimizeSense(OptimizeOption(options, "sense", :max)),
         variableCount = exactObjective.Len(),
         constraintCount = exactMatrix.Len(),
@@ -24031,7 +26688,7 @@ OptimizeRemoveArtificials(phase,artificials) -> {;
           ?: {;
               pivot:=0;
               {@ column=1; column<=@oldColumns && @pivot==0; {;
-                  !@artificials.Includes(column) && @tableau[@row][column]!=0 ?: {; @pivot ~= @column; } ?_ _;
+                  (!(@artificials.Includes(column)) && @tableau[@row][column]!=0) ?: {; @pivot ~= @column; } ?_ _;
               }; column+=1 };
               pivot!=0
                 ?: {; @tableau ~= OptimizePivot(@tableau,@row,@pivot); @basis ~= @basis.Set(@row,@pivot); }
@@ -24114,7 +26771,7 @@ OptimizeCertificate(kind,program,fields) -> {;
 };
 
 OptimizeCheckCertificate(value) -> {;
-    value ? :Map && value[:schema]=="rix.optimize.certificate@1" ?: _ ?_ .Error("Expected an optimization certificate");
+    ((value ? :Map) && value[:schema]=="rix.optimize.certificate@1") ?_> .Error("Expected an optimization certificate");
     kind=value[:kind]; program=OptimizeRequireProgram(value[:program]);
     {? kind==:optimal ? {;
            evaluation=OptimizeEvaluate(@program,@value[:primal]); replay=OptimizeSolveGeneral(@program,{= maxIterations=10000 });
@@ -24122,12 +26779,7 @@ OptimizeCheckCertificate(value) -> {;
              && @value[:primalobjective]==@value[:dualobjective]
              && replay[:status]=="optimal" && replay[:objectivevalue]==@value[:objectivevalue];
        };
-       kind==:unbounded ? {;
-           point=OptimizeVector(@value[:point]); direction=OptimizeVector(@value[:direction]);
-           base=OptimizeEvaluate(@program,point); probe=OptimizeEvaluate(@program,point.Map((entry,index)->entry+direction[index]));
-           improvement=@program[:sense]==:max ?: probe[:objectivevalue]>base[:objectivevalue] ?_ probe[:objectivevalue]<base[:objectivevalue];
-           base[:feasible] && probe[:feasible] && improvement;
-       };
+       kind==:unbounded ? OptimizeRayCheck(program,value[:point],value[:direction]);
        kind==:infeasible ? {;
            replay=OptimizeSolveGeneral(@program,{= maxIterations=10000 });
            @value[:phaseoneobjective]<0 && replay[:status]=="infeasible";
@@ -24191,7 +26843,7 @@ OptimizeSolveStandard(value, options ?= {= }) -> {;
           objectiveValue=_,
           iterations=iterations,
           enteringVariable=entering,
-          tableau=OptimizeMatrixTensor(tableau),
+          tableau=OptimizeMatrixValue(tableau),
           diagnostics=["No leaving row exists for the selected improving direction"]
       })
       ?_ status == :iterationLimit
@@ -24200,7 +26852,7 @@ OptimizeSolveStandard(value, options ?= {= }) -> {;
                solution=_,
                objectiveValue=_,
                iterations=iterations,
-               tableau=OptimizeMatrixTensor(tableau),
+               tableau=OptimizeMatrixValue(tableau),
                diagnostics=["Simplex iteration limit reached"]
            })
            ?_ {;
@@ -24217,13 +26869,13 @@ OptimizeSolveStandard(value, options ?= {= }) -> {;
                }; row += 1 };
                OptimizeResult(@program, {=
                    status="optimal",
-                   solution=OptimizeVectorTensor(solution),
+                   solution=OptimizeVectorStorage(solution),
                    objectiveValue=OptimizeDot(@objective, solution),
-                   slacks=OptimizeVectorTensor(slacks),
+                   slacks=OptimizeVectorStorage(slacks),
                    feasible=slacks.All((slack)->slack >= 0),
                    iterations=@iterations,
                    basis=@basis,
-                   tableau=OptimizeMatrixTensor(@tableau),
+                   tableau=OptimizeMatrixValue(@tableau),
                    diagnostics=[]
                });
            };
@@ -24273,14 +26925,14 @@ OptimizeRhsSensitivity(tableau,basis,basisInverse,sourceRows) -> {;
 OptimizeUnboundedGeneralResult(program,canonical,phaseTwo,totalIterations,columns,original) -> {;
     direction=OptimizeDirectionFromEntering(canonical,phaseTwo[:tableau],phaseTwo[:basis],phaseTwo[:entering],columns);
     certificate=OptimizeCertificate(:unbounded,program,{=
-        point=OptimizeVectorTensor(original),direction=OptimizeVectorTensor(direction),
+        point=OptimizeVectorStorage(original),direction=OptimizeVectorStorage(direction),
         enteringVariable=phaseTwo[:entering],work={= iterations=totalIterations }
     });
     OptimizeResult(program,{=
         schema="rix.optimize.result@2",status="unbounded",method=:twoPhaseExactSimplex,
-        solution=OptimizeVectorTensor(original),objectiveValue=_,feasible=1,
+        solution=OptimizeVectorStorage(original),objectiveValue=_,feasible=1,
         enteringVariable=phaseTwo[:entering],iterations=totalIterations,
-        certificate=certificate,tableau=OptimizeMatrixTensor(phaseTwo[:tableau]),
+        certificate=certificate,tableau=OptimizeMatrixValue(phaseTwo[:tableau]),
         diagnostics=["Exact feasible improving ray has no leaving row"]
     });
 };
@@ -24300,16 +26952,16 @@ OptimizeOriginalCleanRows(setup,clean) -> {;
 OptimizeOptimalGeneralResult(program,canonical,setup,clean,phaseTwo,effectiveObjective,totalIterations,columns,original,evaluation) -> {;
     originalRows=OptimizeOriginalCleanRows(setup,clean);
     basisRows=OptimizeBasisMatrix(originalRows,phaseTwo[:basis],columns);
-    factorization=.linalg.LU(OptimizeMatrixTensor(basisRows));
+    factorization=.linalg.LU(OptimizeMatrixValue(basisRows));
     basisInverse=OptimizeMatrix(factorization.Inverse());
     cBasis=phaseTwo[:basis].Map((column)->@effectiveObjective[column]);
-    dual=.linalg.Solve(OptimizeMatrixTensor(OptimizeTranspose(basisRows)),cBasis)[:solution];
+    dual=.linalg.Solve(OptimizeMatrixValue(OptimizeTranspose(basisRows)),cBasis)[:solution];
     keptBounds=clean[:keptrows].Map((row)->@canonical[:bounds][row]);
     effectiveConstant=program[:sense]==:min ?: 0-canonical[:objectiveconstant] ?_ canonical[:objectiveconstant];
     effectiveDual=effectiveConstant+OptimizeDot(keptBounds,OptimizeVector(dual));
     dualObjective=program[:sense]==:min ?: 0-effectiveDual ?_ effectiveDual;
     certificate=OptimizeCertificate(:optimal,program,{=
-        primal=OptimizeVectorTensor(original),dual=dual,
+        primal=OptimizeVectorStorage(original),dual=dual,
         objectiveValue=evaluation[:objectivevalue],primalObjective=evaluation[:objectivevalue],dualObjective=dualObjective,
         basis=phaseTwo[:basis],work={= iterations=totalIterations }
     });
@@ -24317,11 +26969,11 @@ OptimizeOptimalGeneralResult(program,canonical,setup,clean,phaseTwo,effectiveObj
     sensitivity=OptimizeRhsSensitivity(phaseTwo[:tableau],phaseTwo[:basis],basisInverse,sources);
     OptimizeResult(program,{=
         schema="rix.optimize.result@2",status="optimal",method=:twoPhaseExactSimplex,
-        solution=OptimizeVectorTensor(original),objectiveValue=evaluation[:objectivevalue],
+        solution=OptimizeVectorStorage(original),objectiveValue=evaluation[:objectivevalue],
         slacks=evaluation[:slacks],feasible=evaluation[:feasible],dualSolution=dual,
         certificate=certificate,sensitivity=sensitivity,basis=phaseTwo[:basis],
         basisFactorization=factorization,iterations=totalIterations,
-        tableau=OptimizeMatrixTensor(phaseTwo[:tableau]),diagnostics=[]
+        tableau=OptimizeMatrixValue(phaseTwo[:tableau]),diagnostics=[]
     });
 };
 
@@ -24337,7 +26989,7 @@ OptimizeRunPhaseTwo(program,canonical,setup,phaseOne,maxIterations) -> {;
     original=OptimizeOriginalPoint(canonical,transformed); evaluation=OptimizeEvaluate(program,original);
     {? phaseTwo[:status]==:iterationLimit ? OptimizeResult(program,{=
            schema="rix.optimize.result@2",status="iterationLimit",method=:twoPhaseExactSimplex,
-           phase=2,iterations=totalIterations,tableau=OptimizeMatrixTensor(phaseTwo[:tableau]),
+           phase=2,iterations=totalIterations,tableau=OptimizeMatrixValue(phaseTwo[:tableau]),
            diagnostics=["Phase II simplex iteration limit reached"]
        });
        phaseTwo[:status]==:unbounded ?
@@ -24350,13 +27002,13 @@ OptimizeRunPhaseTwo(program,canonical,setup,phaseOne,maxIterations) -> {;
 
 OptimizeInfeasibleGeneralResult(program,phaseOne,phaseObjective) -> {;
     certificate=OptimizeCertificate(:infeasible,program,{=
-        phaseOneObjective=phaseObjective,basis=phaseOne[:basis],tableau=OptimizeMatrixTensor(phaseOne[:tableau]),
+        phaseOneObjective=phaseObjective,basis=phaseOne[:basis],tableau=OptimizeMatrixValue(phaseOne[:tableau]),
         work={= iterations=phaseOne[:iterations] }
     });
     OptimizeResult(program,{=
         schema="rix.optimize.result@2",status="infeasible",method=:twoPhaseExactSimplex,
         solution=_,objectiveValue=_,feasible=_,iterations=phaseOne[:iterations],
-        certificate=certificate,tableau=OptimizeMatrixTensor(phaseOne[:tableau]),
+        certificate=certificate,tableau=OptimizeMatrixValue(phaseOne[:tableau]),
         diagnostics=["Phase I optimum is negative, so artificial variables cannot all leave the basis"]
     });
 };
@@ -24366,7 +27018,7 @@ OptimizeAfterPhaseOne(program,canonical,setup,phaseOne,maxIterations) -> {;
     result=phaseOne[:status]==:iterationLimit
       ?: OptimizeResult(program,{=
           schema="rix.optimize.result@2",status="iterationLimit",method=:twoPhaseExactSimplex,
-          phase=1,iterations=phaseOne[:iterations],tableau=OptimizeMatrixTensor(phaseOne[:tableau]),
+          phase=1,iterations=phaseOne[:iterations],tableau=OptimizeMatrixValue(phaseOne[:tableau]),
           diagnostics=["Phase I simplex iteration limit reached"]
       })
       ?_ phaseObjective<0
@@ -24427,8 +27079,8 @@ OptimizeEvaluate(value, point) -> {;
         valueKind=:optimizationEvaluation,
         objectiveValue=OptimizeDot(OptimizeVector(program[:objective]), exactPoint),
         feasible=variableFeasible && constraintsFeasible,
-        lhs=OptimizeVectorTensor(lhs),
-        slacks=OptimizeVectorTensor(slacks)
+        lhs=OptimizeVectorStorage(lhs),
+        slacks=OptimizeVectorStorage(slacks)
     };
     result.__type = "OptimizationEvaluation";
     result.objectiveValue = result[:objectiveValue];
@@ -24443,8 +27095,310 @@ OptimizeConvenience(objective, matrix, bounds, options, sense) -> {;
     OptimizeSolve(OptimizeProgram(objective, matrix, bounds, configured), options);
 };
 
+
+OptimizeFitsClaim={>
+    (value) ?- [ok=.ValidatedClaimEqual(value,value)] -> 1,
+    (value) -> _
+};
+
+### Bounded mixed-integer branch-and-bound over the exact LP solver.
+OptimizeBudget(value,label,ceiling) -> {;
+    exact=value ~!: :Integer;
+    exact>=1 && exact<=ceiling ?_> .Error(@"@{label} must be 1..@{ceiling}");exact;
+};
+OptimizeRayCheck(program,point,direction) -> {;
+    p=OptimizeVector(point);d=OptimizeVector(direction);rows=OptimizeMatrix(program[:A]);
+    d.Len()==p.Len() && p.Len()==program[:variablecount] ?_> _;
+    OptimizeEvaluate(program,p)[:feasible] ?_> _;
+    slopes=rows.Map(row->OptimizeDot(row,d));
+    constraints=slopes.All((s,i)->{? program[:relations][i]==:le ? s<=0;program[:relations][i]==:ge ? s>=0;s==0 });
+    bounds=d.All((s,i)->(program[:lowerbounds][i]==_ || s>=0)&&(program[:upperbounds][i]==_ || s<=0));
+    improvement=OptimizeDot(OptimizeVector(program[:objective]),d);
+    constraints && bounds && (program[:sense]==:min ?: improvement<0 ?_ improvement>0);
+};
+OptimizeMIPAxes(value,n) -> {;
+    value ? :Array ?_> .Error("Integer axes must be an Array of coordinate indices");
+    value.Len()>=1 && value.Len()<=n ?_> .Error("Integer axis count must be 1..dimension");
+    axes=value.Map(axis->OptimizeBudget(axis,"Integer axis",n));
+    axes.All(axis->axes.Filter(other->other==axis).Len()==1) ?_> .Error("Integer axes must be distinct");axes;
+};
+OptimizeMIPNode(program,node) -> OptimizeProgram(program[:objective],program[:A],program[:b],{=
+    relations=program[:relations],sense=program[:sense],lowerBounds=node[:lower],upperBounds=node[:upper],name=program[:name]
+});
+OptimizeMIPBetter(program,left,right) -> program[:sense]==:min ?: left<right ?_ left>right;
+OptimizeMIPBound(program,pending,incumbent) -> {;
+    pending.All(node->node[:bound]!=_) ?_> _;
+    values=pending.Map(node->node[:bound]);
+    incumbent==_ ?: _ ?_ {; @values~=@values.Push(@incumbent[:objective]); };
+    values.Len()>0 ?_> _;
+    values.Reduce((a,b)->OptimizeMIPBetter(program,a,b) ?: a ?_ b,values[1]);
+};
+OptimizeMIPRun(program,axes,options,prior ?= _) -> {;
+    limit=options[:maxnodes];iterations=options[:maxiterations];
+    pending:=prior==_ ?: [{= id="root",lower=program[:lowerbounds],upper=program[:upperbounds],bound=_ }] ?_ prior[:pending];
+    trace:=prior==_ ?: [] ?_ prior[:trace];unresolved:=prior==_ ?: [] ?_ prior[:unresolved];incumbent:=prior==_ ?: _ ?_ prior[:incumbent];ray:=_;evidenceFull:=_;
+    {@ step=@trace.Len();step<@limit && @pending.Len()>0 && @ray==_ && @evidenceFull==_;{;
+        saved=[@pending,@trace,@unresolved,@incumbent,@ray];
+        node=@pending[1];@pending~=@pending.RemoveAt(1);
+        impossible=node[:lower].Any((lower,i)->lower!=_ && node[:upper][i]!=_ && lower>node[:upper][i]);
+        impossible
+          ?: {; @trace~=@trace.Push({= node=@node,decision=:inconsistentBounds }); }
+          ?_ {;
+            model=OptimizeMIPNode(@program,@node);relax=OptimizeSolveGeneral(model,{= maxIterations=@iterations });
+            state=relax[:status];record={= node=@node,status=state,point=relax[:solution],objective=relax[:objectivevalue],certificate=relax[:certificate],iterations=relax[:iterations] };
+            {? state=="infeasible" ? {; @trace~=@trace.Push(@record.Merge({= decision=:infeasible })); };
+               state=="iterationLimit" ? {; @unresolved~=@unresolved.Push(@node);@trace~=@trace.Push(@record.Merge({= decision=:unresolvedRelaxation })); };
+               {;
+                 point=OptimizeVector(@relax[:solution]);fractional=@axes.Filter(axis->@point[axis]!=(@point[axis] ~!: :Rational).Floor());
+                 nodeBound=@state=="unbounded" ?: _ ?_ @relax[:objectivevalue];
+                 prune=@incumbent!=_ && nodeBound!=_ && OptimizeMIPBetter(@program,nodeBound,@incumbent[:objective])==_;
+                 {? prune ? {; @trace~=@trace.Push(@record.Merge({= decision=:boundPruned })); };
+                    fractional.Len()==0 ? {;
+                      @state=="unbounded"
+                        ?: {;
+                            direction=OptimizeVector(@relax[:certificate][:direction]);
+                            scale=@axes.Reduce((multiple,axis)->multiple*(@direction[axis] ~!: :Rational).Denominator(),1);
+                            direction=direction.Map(entry->entry*scale);
+                            OptimizeRayCheck(@model,@point,direction) ?_> .Error("Integer improving ray verification failed");
+                            @ray={= point=@point,direction=direction,node=@node,certificate=@relax[:certificate] };
+                          }
+                        ?_ {; @incumbent={= point=@point,objective=@relax[:objectivevalue],nodeId=@node[:id] }; };
+                      @trace~=@trace.Push(@record.Merge({= decision=@state=="unbounded" ?: :integerRay ?_ :incumbent }));
+                    };
+                    {;
+                      axis=@fractional[1];cut=(@point[axis] ~!: :Rational).Floor();
+                      low=@node[:lower][axis];high=@node[:upper][axis];
+                      left={= id=@"@{@node[:id]}L",lower=@node[:lower],upper=@node[:upper].Set(axis,high==_ ?: cut ?_ .Min(high,cut)),bound=@nodeBound };
+                      right={= id=@"@{@node[:id]}R",lower=@node[:lower].Set(axis,low==_ ?: cut+1 ?_ .Max(low,cut+1)),upper=@node[:upper],bound=@nodeBound };
+                      @pending~=@pending.Concat([left,right]);
+                      @trace~=@trace.Push(@record.Merge({= decision=:split,axis=axis,cut=cut,children=[left[:id],right[:id]] }));
+                    }
+                 };
+               }
+            };
+          };
+        retained=[OptimizeProgramRecord(@program),@axes,@options,@pending,@trace,@unresolved,@incumbent,@ray];
+        OptimizeFitsClaim([retained,retained]) ?: _ ?_ {;
+            @pending~=@saved[1];@trace~=@saved[2];@unresolved~=@saved[3];@incumbent~=@saved[4];@ray~=@saved[5];@evidenceFull~=1;
+        };
+    };step+=1};
+    remaining=pending.Concat(unresolved);bound=OptimizeMIPBound(program,remaining,incumbent);
+    status=ray!=_ ?: :unbounded ?_ remaining.Len()>0 ?: :exhausted ?_ incumbent==_ ?: :infeasible ?_ :optimal;
+    .ImmutableValue({= schema="rix.optimize.mixed-integer-result@1",program=OptimizeProgramRecord(program),integerAxes=axes,options=options,
+        status=status,exact=1,certified=status!=:exhausted,solution=incumbent==_ ?: _ ?_ OptimizeVectorStorage(incumbent[:point]),
+        objectiveValue=incumbent==_ ?: _ ?_ incumbent[:objective],incumbent=incumbent,bound=bound,
+        lowerBound=program[:sense]==:min ?: bound ?_ (incumbent==_ ?: _ ?_ incumbent[:objective]),
+        upperBound=program[:sense]==:max ?: bound ?_ (incumbent==_ ?: _ ?_ incumbent[:objective]),
+        gap=(incumbent==_ || bound==_) ?: _ ?_ (incumbent[:objective]-bound).Abs(),
+        pending=pending,unresolved=unresolved,trace=trace,ray=ray,processed=trace.Len(),scope=:globalLinearIntegerProgram,evidenceBudgetExceeded=evidenceFull });
+};
+OptimizeMixedInteger(value,integerAxes,options ?= {= }) -> {;
+    program=OptimizeRequireProgram(value);program[:variablecount]<=8 && program[:constraintcount]<=32 ?_> .Error("MixedInteger supports at most eight variables and 32 constraints");
+    axes=OptimizeMIPAxes(integerAxes,program[:variablecount]);
+    limits={= maxNodes=OptimizeBudget(OptimizeOption(options,"maxnodes",64),"maxNodes",256),maxIterations=OptimizeBudget(OptimizeOption(options,"maxiterations",256),"maxIterations",4096) };
+    record=program.Record();.ValidatedClaimEqual([record,record,record,record],[record,record,record,record]);
+    result=OptimizeMIPRun(program,axes,limits);.ValidatedClaimEqual(result,result);result;
+};
+OptimizeCheckMixedInteger(result) -> {;
+    result[:schema]=="rix.optimize.mixed-integer-result@1" ?_> _;
+    .ValidatedClaimEqual(result,OptimizeMixedInteger(OptimizeFromRecord(result[:program]),result[:integeraxes],result[:options]));
+};
+OptimizeResumeMixedInteger(result,additional ?= 64) -> {;
+    OptimizeCheckMixedInteger(result) ?_> .Error("Cannot resume altered mixed-integer evidence");
+    result[:pending].Len()>0 ?_> result;
+    count=OptimizeBudget(additional,"additional nodes",256);total=OptimizeBudget(result[:options][:maxnodes]+count,"total nodes",256);
+    program=OptimizeFromRecord(result[:program]);
+    result[:ray]==_ ?_> result;
+    OptimizeMIPRun(program,result[:integeraxes],result[:options].Set("maxnodes",total),result);
+};
+
+
+### Exact convex quadratics: principal-minor PSD evidence and bounded active sets.
+OptimizeQuadratic(hessian,objective,matrix,bounds,options ?= {= }) -> {;
+    OptimizeSense(OptimizeOption(options,"sense",:min))==:min ?_> .Error("Quadratic requires minimization of a positive semidefinite Hessian");
+    h=OptimizeMatrix(hessian,"Quadratic Hessian");n=h.Len();
+    n<=6 && h.All(row->row.Len()==n) ?_> .Error("Quadratic Hessian must be square with dimension at most six");
+    h.All((row,i)->row.All((entry,j)->entry==h[j][i])) ?_> .Error("Quadratic Hessian must be symmetric");
+    program=OptimizeProgram(objective,matrix,bounds,options.Set("sense",:min));
+    program[:variablecount]==n && program[:constraintcount]<=16 ?_> .Error("Quadratic constraints must match dimension and have at most 16 rows");
+    .ImmutableValue({= schema="rix.optimize.quadratic-program@1",H=OptimizeMatrixValue(h),linear=OptimizeProgramRecord(program),constant=OptimizeExact(OptimizeOption(options,"constant",0),"Quadratic constant") });
+};
+OptimizeMaskIndices(mask,n) -> {;
+    result:=[];{@ i=1;i<=@n;{; (@mask//(2^(i-1)))%2==1 ?: {; @result~=@result.Push(@i); } ?_ _; };i+=1};result;
+};
+OptimizePSD(rows) -> {;
+    total=2^(rows.Len());minors:=[];{@ mask=1;mask<@total;{;
+        axes=OptimizeMaskIndices(mask,@rows.Len());part=axes.Map(i->@axes.Map(j->@rows[i][j]));
+        determinant=.linalg.Determinant(OptimizeMatrixValue(part));@minors~=@minors.Push({= axes=axes,determinant=determinant });
+    };mask+=1};
+    {= positiveSemidefinite=minors.All(item->item[:determinant]>=0),principalMinors=minors };
+};
+OptimizeClosedRows(program) -> {;
+    rows=OptimizeMatrix(program[:A]);b=OptimizeVector(program[:b]);inequalities:=[];equalities:=[];
+    {@ i=1;i<=@rows.Len();{;
+        row=@rows[i];rhs=@b[i];relation=@program[:relations][i];
+        relation==:eq ?: {; @equalities~=@equalities.Push({= row=@row,bound=@rhs }); }
+          ?_ {; sign=@relation==:ge ?: -1 ?_ 1;@inequalities~=@inequalities.Push({= row=@row.Map(entry->entry*sign),bound=sign*@rhs }); };
+    };i+=1};
+    {@ i=1;i<=@program[:variablecount];{;
+        lower=@program[:lowerbounds][i];upper=@program[:upperbounds][i];
+        lower==_ ?: _ ?_ {; @inequalities~=@inequalities.Push({= row=OptimizeIdentityRow(@program[:variablecount],@i).Map(x->-x),bound=-@lower }); };
+        upper==_ ?: _ ?_ {; @inequalities~=@inequalities.Push({= row=OptimizeIdentityRow(@program[:variablecount],@i),bound=@upper }); };
+    };i+=1};
+    inequalities.Len()<=16 ?_> .Error("Quadratic active-set work supports at most 16 inequalities including bounds");
+    {= inequalities=inequalities,equalities=equalities };
+};
+OptimizeQPValue(model,point) -> {;
+    h=OptimizeMatrix(model[:H]);c=OptimizeVector(model[:linear][:objective]);
+    OptimizeDot(point,h.Map(row->OptimizeDot(row,point)))/2+OptimizeDot(c,point)+model[:constant];
+};
+OptimizeKKT(model,program,rows,active,iterations) -> {;
+    h=OptimizeMatrix(model[:H]);n=h.Len();c=OptimizeVector(program[:objective]);
+    selected=rows[:equalities].Concat(active.Map(i->rows[:inequalities][i]));k=selected.Len();
+    matrix=h.Map((row,i)->row.Concat(selected.Map(item->item[:row][i])));bounds=c.Map(x->-x);relations=OptimizeRepeat(:eq,n);
+    matrix=matrix.Concat(selected.Map(item->item[:row].Concat(OptimizeZeros(k))));bounds=bounds.Concat(selected.Map(item->item[:bound]));relations=relations.Concat(OptimizeRepeat(:eq,k));
+    matrix=matrix.Concat(rows[:inequalities].Map(item->item[:row].Concat(OptimizeZeros(k))));bounds=bounds.Concat(rows[:inequalities].Map(item->item[:bound]));relations=relations.Concat(OptimizeRepeat(:le,rows[:inequalities].Len()));
+    lower=OptimizeRepeat(_,n+rows[:equalities].Len()).Concat(OptimizeZeros(active.Len()));
+    system=OptimizeProgram(OptimizeZeros(n+k),OptimizeMatrixValue(matrix),bounds,{= relations=relations,lowerBounds=lower });
+    solved=OptimizeSolveGeneral(system,{= maxIterations=iterations });
+    solved[:status]=="optimal" ?_> {= status=solved[:status] };
+    full=OptimizeVector(solved[:solution]);point=full.Slice(1,n+1);multipliers=full.Slice(n+1,full.Len()+1);
+    gradient=h.Map((row,i)->OptimizeDot(row,point)+c[i]);
+    residual=gradient.Map((entry,i)->entry+selected.Reduce((sum,item,j)->sum+item[:row][i]*multipliers[j],0));
+    residual.All(x->x==0) && OptimizeEvaluate(program,point)[:feasible] && multipliers.Slice(rows[:equalities].Len()+1,multipliers.Len()+1).All(x->x>=0)
+      ?_> .Error("Quadratic KKT verification failed");
+    {= status=:optimal,point=point,objective=OptimizeQPValue(model,point),multipliers=multipliers,active=active,residual=residual,
+        activeResiduals=selected.Map(item->OptimizeDot(item[:row],point)-item[:bound]) };
+};
+OptimizeQuadraticSolve(model,options ?= {= }) -> {;
+    model[:schema]=="rix.optimize.quadratic-program@1" ?_> .Error("Expected a QuadraticProgram");
+    program=OptimizeFromRecord(model[:linear]);h=OptimizeMatrix(model[:H]);
+    expected=OptimizeQuadratic(model[:H],program[:objective],program[:A],program[:b],{= relations=program[:relations],lowerBounds=program[:lowerbounds],upperBounds=program[:upperbounds],constant=model[:constant],name=program[:name] });
+    .ValidatedClaimEqual(model,expected) ?_> .Error("Altered quadratic program");
+    limit=OptimizeBudget(OptimizeOption(options,"maxactivesets",64),"maxActiveSets",256);
+    masks=OptimizeBudget(OptimizeOption(options,"maxmasks",4096),"maxMasks",65536);
+    iterations=OptimizeBudget(OptimizeOption(options,"maxiterations",512),"maxIterations",4096);
+    psd=OptimizePSD(h);psd[:positivesemidefinite] ?_> .ImmutableValue({= schema="rix.optimize.quadratic-result@1",model=model,options=options,status=:unsupportedNonconvex,convexity=psd,certified=_,scope=:unknown });
+    rows=OptimizeClosedRows(program);
+    feasibility=OptimizeSolveGeneral(OptimizeProgram(OptimizeZeros(h.Len()),program[:A],program[:b],{= relations=program[:relations],lowerBounds=program[:lowerbounds],upperBounds=program[:upperbounds] }),{= maxIterations=iterations });
+    feasibility[:status]!="infeasible" ?_> .ImmutableValue({= schema="rix.optimize.quadratic-result@1",model=model,options=options,status=:infeasible,scope=:global,certified=1,convexity=psd,feasibility=feasibility[:certificate] });
+    rayRows=h.Concat(rows[:equalities].Map(item->item[:row])).Concat(rows[:inequalities].Map(item->item[:row])).Push(OptimizeVector(program[:objective]));
+    rayBounds=OptimizeZeros(rayRows.Len()).Set(rayRows.Len(),-1);
+    rayRelations=OptimizeRepeat(:eq,h.Len()+rows[:equalities].Len()).Concat(OptimizeRepeat(:le,rows[:inequalities].Len()+1));
+    rayModel=OptimizeProgram(OptimizeZeros(h.Len()),OptimizeMatrixValue(rayRows),rayBounds,{= relations=rayRelations,lowerBounds=OptimizeRepeat(_,h.Len()) });
+    ray=OptimizeSolveGeneral(rayModel,{= maxIterations=iterations });
+    (ray[:status]!="optimal" || feasibility[:status]!="optimal") ?_> {;
+        direction=OptimizeVector(@ray[:solution]);point=OptimizeVector(@feasibility[:solution]);
+        OptimizeRayCheck(@program,point,direction) && @h.All(row->OptimizeDot(row,direction)==0) ?_> .Error("Quadratic improving ray verification failed");
+        .ImmutableValue({= schema="rix.optimize.quadratic-result@1",model=@model,options=@options,status=:unbounded,scope=:global,certified=1,convexity=@psd,ray={= point=point,direction=direction } });
+    };
+    total=2^(rows[:inequalities].Len());trace:=[];answer:=_;next:=0;
+    {@ mask=0;mask<@total && mask<@masks && @trace.Len()<@limit && @answer==_;{;
+        active=OptimizeMaskIndices(mask,@rows[:inequalities].Len());
+        active.Len()<=@h.Len() ?: {;
+            result=OptimizeKKT(@model,@program,@rows,@active,@iterations);@trace~=@trace.Push({= mask=@mask,status=result[:status] });
+            result[:status]==:optimal ?: {; @answer~=@result; } ?_ _;
+        } ?_ _;
+        @next~=mask+1;
+    };mask+=1};
+    .ImmutableValue({= schema="rix.optimize.quadratic-result@1",model=model,options=options,status=answer==_ ?: :unknown ?_ :optimal,
+        scope=answer==_ ?: :unknown ?_ :global,certified=answer!=_,exact=1,convexity=psd,kkt=answer,
+        solution=answer==_ ?: _ ?_ OptimizeVectorStorage(answer[:point]),objectiveValue=answer==_ ?: _ ?_ answer[:objective],
+        trace=trace,pendingMasks=(answer!=_ || next==total) ?: [] ?_ [{= first=next,last=total-1 }],
+        unresolved=answer==_ ?: [:noVerifiedKKTPointWithinBudget] ?_ [] });
+};
+OptimizeCheckQuadratic(result) -> .ValidatedClaimEqual(result,OptimizeQuadraticSolve(result[:model],result[:options]));
+
+
+### Bounded global objective enclosures over finite Rational boxes.
+OptimizeBoxRelation(relation,range) -> {?
+    relation==:le ? {= excluded=range.Low()>0,inside=range.High()<=0 };
+    relation==:lt ? {= excluded=range.Low()>=0,inside=range.High()<0 };
+    relation==:ge ? {= excluded=range.High()<0,inside=range.Low()>=0 };
+    relation==:gt ? {= excluded=range.High()<=0,inside=range.Low()>0 };
+    relation==:eq ? {= excluded=range.Low()>0 || range.High()<0,inside=range.Low()==0 && range.High()==0 };
+    .Error("Box constraints require :le, :lt, :ge, :gt, or :eq against zero")
+};
+OptimizeSafeRange(range) -> range[:certified]==1 && range[:domainstatus]==:allDefined && (range[:interval] ? :RationalInterval);
+OptimizeBoxAssess(objective,constraints,box,rangeOptions) -> {;
+    goal=.numerics.GraphRange(objective,box,rangeOptions);
+    checks=constraints.Map(constraint->{;
+        range=.numerics.GraphRange(constraint[:expression],box,rangeOptions);
+        OptimizeSafeRange(range) ?_> {= certified=_,excluded=_,inside=_,range=range };
+        OptimizeBoxRelation(constraint[:relation],range[:interval]).Merge({= certified=1,range=range });
+    });
+    {= objective=goal,checks=checks,certified=OptimizeSafeRange(goal) && checks.All(check->check[:certified]==1),
+       excluded=checks.Any(check->check[:excluded]),inside=checks.All(check->check[:inside]) };
+};
+OptimizeNonlinear(objective,constraints,boxValue,options ?= {= }) -> {;
+    .ValidatedClaimEqual([objective,constraints,boxValue,options],[objective,constraints,boxValue,options]);
+    constraints ? :Array ?_> .Error("Nonlinear constraints must be an Array");
+    constraints.Len()<=16 ?_> .Error("Nonlinear optimization supports at most 16 constraints");
+    _ := constraints.Map(item->OptimizeBoxRelation(item[:relation],0:0));
+    box=.numerics.Box(boxValue);names=box[:variables];names.Len()<=8 ?_> .Error("Nonlinear optimization supports at most eight variables");
+    axes=box[:axes].MapValues(axis->axis.ToRationalInterval());limit=OptimizeBudget(OptimizeOption(options,"maxboxes",63),"maxBoxes",256);
+    depth=OptimizeBudget(OptimizeOption(options,"maxdepth",16),"maxDepth",32);
+    tolerance=OptimizeExact(OptimizeOption(options,"tolerance",1/1000),"Objective tolerance");tolerance>=0 ?_> .Error("Objective tolerance must be nonnegative");
+    sense=OptimizeSense(OptimizeOption(options,"sense",:min));
+    effective=sense==:min ?: objective ?_ -objective;
+    rangeOptions={= maxSubintervals=OptimizeBudget(OptimizeOption(options,"rangesubintervals",1),"rangeSubintervals",16) };
+    pending:=[{= id="root",box=axes,depth=0,bound=_ }];trace:=[];leaves:=[];incumbent:=_;evidenceFull:=_;
+    {@ step=0;step<@limit && @pending.Len()>0 && @evidenceFull==_;{;
+        saved=[@pending,@trace,@leaves,@incumbent];
+        node=@pending[1];@pending~=@pending.RemoveAt(1);
+        assessment=OptimizeBoxAssess(@effective,@constraints,node[:box],@rangeOptions);
+        {? assessment[:certified]==_ ? {; @leaves~=@leaves.Push(@node.Merge({= reason=:rangeUnavailable }));@trace~=@trace.Push({= node=@node,decision=:unresolved,assessment=@assessment }); };
+           assessment[:excluded] ? {; @trace~=@trace.Push({= node=@node,decision=:excluded,assessment=@assessment }); };
+           {;
+             bound=@assessment[:objective][:interval].Low();
+             midpoint=@node[:box].MapValues(interval->(interval.Low()+interval.High())/2);
+             sample=OptimizeBoxAssess(@effective,@constraints,midpoint,@rangeOptions);
+             (sample[:certified] && sample[:inside]) ?: {;
+                candidate=@sample[:objective][:interval];
+                (@incumbent==_ || candidate.High()<@incumbent[:upper]) ?: {; @incumbent={= point=@midpoint,upper=@candidate.High(),interval=@candidate,checks=@sample[:checks] }; } ?_ _;
+             } ?_ _;
+             prune=@incumbent!=_ && bound>=@incumbent[:upper];
+             widths=@names.Map(name->@node[:box][name].Width());width=widths.Reduce((a,b)->.Max(a,b),widths[1]);
+             {? prune ? {; @trace~=@trace.Push({= node=@node,decision=:boundPruned,assessment=@assessment,sample=@sample }); };
+                (@node[:depth]>=@depth || width==0) ? {; @leaves~=@leaves.Push(@node.Merge({= bound=@bound,reason=:depthOrPointLimit }));@trace~=@trace.Push({= node=@node,decision=:unresolved,assessment=@assessment,sample=@sample }); };
+                {;
+                  axis=@names[OptimizeIndexOf(@widths,@width)];cut=(@node[:box][axis].Low()+@node[:box][axis].High())/2;
+                  left=@node[:box].Set(axis,@node[:box][axis].Low():cut);right=@node[:box].Set(axis,cut:@node[:box][axis].High());
+                  @pending~=@pending.Concat([{= id=@"@{@node[:id]}L",box=left,depth=@node[:depth]+1,bound=@bound },{= id=@"@{@node[:id]}R",box=right,depth=@node[:depth]+1,bound=@bound }]);
+                  @trace~=@trace.Push({= node=@node,decision=:split,axis=axis,cut=cut,assessment=@assessment,sample=@sample });
+                }
+             };
+           }
+        };
+        retained=[@objective,@constraints,@axes,@options,@pending,@trace,@leaves,@incumbent];
+        OptimizeFitsClaim([retained,retained]) ?: _ ?_ {;
+            @pending~=@saved[1];@trace~=@saved[2];@leaves~=@saved[3];@incumbent~=@saved[4];@evidenceFull~=1;
+        };
+    };step+=1};
+    remaining=pending.Concat(leaves);validBound=remaining.All(node->node[:bound]!=_);
+    candidates=remaining.Map(node->node[:bound]);incumbent==_ ?: _ ?_ {; @candidates~=@candidates.Push(@incumbent[:upper]); };
+    lower=(validBound && candidates.Len()>0) ?: candidates.Reduce((a,b)->.Min(a,b),candidates[1]) ?_ _;
+    gap=(incumbent==_ || lower==_) ?: _ ?_ incumbent[:upper]-lower;
+    status=(remaining.Len()==0 && incumbent==_) ?: :infeasible ?_ gap==0 ?: :optimal ?_ (gap!=_ && gap<=tolerance) ?: :boundedGap ?_ :exhausted;
+    .ImmutableValue({= schema="rix.optimize.box-result@1",objective=objective,constraints=constraints,box=axes,options=options,sense=sense,
+      status=status,scope=(status==:infeasible || status==:optimal || status==:boundedGap) ?: :global ?_ :unknown,
+      lowerBound=sense==:min ?: lower ?_ (incumbent==_ ?: _ ?_ -incumbent[:upper]),
+      upperBound=sense==:min ?: (incumbent==_ ?: _ ?_ incumbent[:upper]) ?_ (lower==_ ?: _ ?_ -lower),
+      gap=gap,incumbent=incumbent,trace=trace,pending=pending,unresolved=leaves,certified=status==:infeasible || status==:optimal || status==:boundedGap,boundsCertified=validBound,
+      derivativeAssumptions=[],method=:certifiedRangeSubdivision,localOptimumClaim=_,processed=trace.Len(),evidenceBudgetExceeded=evidenceFull });
+};
+OptimizeCheckNonlinear(result) -> .ValidatedClaimEqual(result,OptimizeNonlinear(result[:objective],result[:constraints],result[:box],result[:options]));
+
 optimizeNamespace = {= };
 optimizeNamespace._proto = {=
+    Nonlinear=(self,objective,constraints,box,options ?= {= })->OptimizeNonlinear(objective,constraints,box,options),
+    CheckNonlinear=(self,result)->OptimizeCheckNonlinear(result),
+    Quadratic=(self,h,c,a,b,options ?= {= })->OptimizeQuadratic(h,c,a,b,options),
+    SolveQuadratic=(self,model,options ?= {= })->OptimizeQuadraticSolve(model,options),
+    CheckQuadratic=(self,result)->OptimizeCheckQuadratic(result),
+    MixedInteger=(self,program,axes,options ?= {= })->OptimizeMixedInteger(program,axes,options),
+    CheckMixedInteger=(self,result)->OptimizeCheckMixedInteger(result),
+    ResumeMixedInteger=(self,result,additional ?= 64)->OptimizeResumeMixedInteger(result,additional),
     LinearProgram=(self, objective, matrix, bounds, options ?= {= })->OptimizeProgram(objective, matrix, bounds, options),
     Solve=(self, program, options ?= {= })->OptimizeSolve(program, options),
     Evaluate=(self, program, point)->OptimizeEvaluate(program, point),
@@ -25932,17 +28886,17 @@ oracleNamespace._proto = {=
 `, sourcePath: "bundled:oracle", kind: "rix" });
   catalog.addMetadata({ id: "pdf", description: "PDF document and figure renderer orchestrated through LaTeX.", kind: "host", mount: "pdf", exports: ["Render"], groups: ["Renderers"], permissions: ["process", "files"], provides: ["rix.renderer.pdf@1", "rix.renderer.pdf@2"], schemas: ["rix.pdf.render@2"], targets: ["pdf", "application/pdf"], snapshot: true, deterministic: false, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:pdf" }, { sourcePath: "bundled:pdf", kind: "host" });
   catalog.registerInstaller("pdf", install16);
-  catalog.addMetadata({ id: "plot", description: "Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.", kind: "rix", mount: "plot", exports: ["Polynomial", "PolynomialPOI", "Function", "Parametric", "Scatter", "Line", "Bar", "Step", "Polar", "ErrorBand", "Interval", "Trajectory", "PhasePortrait", "EventTrajectory", "EventPhasePortrait", "LinkedTrajectory", "LinkedEvents", "Implicit", "Inequality", "Contour", "HeatMap", "VectorField", "ColorScale"], groups: ["Plot", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.refinement-policy@1"], schemas: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.band-evidence@1", "rix.color-scale@1", "rix.plot.linked-trajectory@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { source: `/**
+  catalog.addMetadata({ id: "plot", description: "Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.", kind: "rix", mount: "plot", exports: ["Polynomial", "PolynomialPOI", "Function", "Parametric", "Scatter", "Line", "Bar", "Step", "Polar", "ErrorBand", "Interval", "CertifiedRegions", "Trajectory", "PhasePortrait", "EventTrajectory", "EventPhasePortrait", "LinkedTrajectory", "LinkedEvents", "Implicit", "Inequality", "Contour", "HeatMap", "VectorField", "ColorScale", "Downsample", "BoundedLine", "Stream", "StreamAppend", "StreamLine", "HeatMapData"], groups: ["Plot", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.plot@1", "rix.plot.poi@1", "rix.plot.refinement-policy@1"], schemas: ["rix.plot.samples@1", "rix.plot.stream@1", "rix.plot.sampling-budget@1", "rix.plot@1", "rix.plot.poi@1", "rix.plot.band-evidence@1", "rix.color-scale@1", "rix.plot.linked-trajectory@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:plot" }, { source: `/**
 id: plot
 description: Pure-RiX exact and numerics-backed 2D plotting that lowers to portable core Graphics scenes.
 kind: rix
 mount: plot
-exports: [Polynomial, PolynomialPOI, Function, Parametric, Scatter, Line, Bar, Step, Polar, ErrorBand, Interval, Trajectory, PhasePortrait, EventTrajectory, EventPhasePortrait, LinkedTrajectory, LinkedEvents, Implicit, Inequality, Contour, HeatMap, VectorField, ColorScale]
+exports: [Polynomial, PolynomialPOI, Function, Parametric, Scatter, Line, Bar, Step, Polar, ErrorBand, Interval, CertifiedRegions, Trajectory, PhasePortrait, EventTrajectory, EventPhasePortrait, LinkedTrajectory, LinkedEvents, Implicit, Inequality, Contour, HeatMap, VectorField, ColorScale, Downsample, BoundedLine, Stream, StreamAppend, StreamLine, HeatMapData]
 groups: [Plot, Graphics, Exact]
 permissions: []
 requires: [rix.numerics@1]
 provides: [rix.plot@1, rix.plot.poi@1, rix.plot.refinement-policy@1]
-schemas: [rix.plot@1, rix.plot.poi@1, rix.plot.band-evidence@1, rix.color-scale@1, rix.plot.linked-trajectory@1]
+schemas: [rix.plot.samples@1, rix.plot.stream@1, rix.plot.sampling-budget@1, rix.plot@1, rix.plot.poi@1, rix.plot.band-evidence@1, rix.color-scale@1, rix.plot.linked-trajectory@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -26476,7 +29430,9 @@ PlotGeneral(data, settings, kind) -> {;
                }; index += 1 };
                current.Len()>1 ?: {; @segments ~= @segments.Push(@current); } ?_ _;
                {@ index=1; index <= @segments.Len(); {;
-                   @children ~= @children.Push(.Graphics.Path(@segments[index], @style));
+                   hit=PlotOption(@style,"hitid");
+                   segmentStyle=hit==_ ?: @style ?_ @style.Merge({= hitId=@"@{hit}-segment-@{index}" });
+                   @children ~= @children.Push(.Graphics.Path(@segments[index], segmentStyle));
                }; index += 1 };
                @unresolved += segments.Len() > 1 ?: segments.Len()-1 ?_ 0;
            };
@@ -26512,11 +29468,13 @@ PlotGeneral(data, settings, kind) -> {;
                 data=samples.Map((sample)->sample[:point]),
                 originalData=samples.Map((sample)->sample[:original]),
                 sourceData=PlotOption(settings,"sourcedata"),
+                sampleIds=PlotOption(settings,"sampleids",[]),
                 style=style,
                 label=PlotOption(settings,"label")
             }],
             domain=PlotOption(settings,"sourcedomain"),
-            sampling={= method=:uniform_parameter,samples=samples.Len() },
+            sampling=PlotOption(settings,"sampling",{= method=:uniform_parameter,samples=samples.Len() }),
+            records=PlotOption(settings,"records",[]),
             status=unresolved==0 ?: :sampled ?_ :partial,
             rendering=:series,
             tickCount=tickCount,
@@ -27077,6 +30035,64 @@ PlotInequality(fn,xDomain,yDomain,settings ?= {= }) -> {;
     });
 };
 
+PlotCertifiedRegions(result,settings ?= {= }) ?!- [
+    schema=result[:schema],
+    schema=="rix.geometry.implicit-trace@1"||schema=="rix.numerics.box-subdivision@1" ?_> .Error("plot.CertifiedRegions requires checked implicit or root boxes"),
+    checked=schema=="rix.geometry.implicit-trace@1" ?: .ImplicitTraceCheck(result) ?_ .numerics.CheckBoxSubdivision(result),
+    checked[:accepted] ?_> .Error("plot.CertifiedRegions rejected unchecked box evidence")
+] -> {;
+    trace=schema=="rix.geometry.implicit-trace@1";
+    names=result[:variables];
+    selected=PlotOption(settings,"axes",names.Len()==1 ?: [names[1]] ?_ [names[1],names[2]]);
+    (selected.Len()==1||selected.Len()==2)&&selected.Distinct().Len()==selected.Len()&&selected.All((name)->@names.Includes(name))
+      ?_> .Error("plot.CertifiedRegions axes must select one or two distinct box variables");
+    xaxis=selected[1];yaxis=selected.Len()==2 ?: selected[2] ?_ _;
+    xrange=result[:inputBox][:axes][xaxis].ToRationalInterval();
+    yrange=yaxis==_ ?: (-1):1 ?_ result[:inputBox][:axes][yaxis].ToRationalInterval();
+    xdomain=xrange.Low()==xrange.High() ?: [xrange.Low()-1,xrange.High()+1] ?_ [xrange.Low(),xrange.High()];
+    ydomain=yrange.Low()==yrange.High() ?: [yrange.Low()-1,yrange.High()+1] ?_ [yrange.Low(),yrange.High()];
+    config=PlotFieldConfig(xdomain,ydomain,settings);
+    regular=trace ?: result[:arcs] ?_ result[:unique];
+    leaves=result[:excluded].Concat(regular).Concat(result[:unresolved]);
+    leaves.Len()<=4097 ?_> .Error("plot.CertifiedRegions exceeds the complete region display budget");
+    children:=[];records:=[];
+    {@ index=1;index<=@leaves.Len();{;
+        node=@leaves[index];kind=node[:classification];
+        stopped=PlotOption(node,"reason",_)!=_;
+        color=stopped ?: "#fbbf24" ?_ kind==:excluded ?: "#cbd5e1" ?_ kind==:unique ?: "#86efac" ?_ kind==:regularArc ?: "#93c5fd" ?_ "#fbbf24";
+        x=node[:box][:axes][@xaxis].ToRationalInterval();
+        y=@yaxis==_ ?: (-1/4):(1/4) ?_ node[:box][:axes][@yaxis].ToRationalInterval();
+        origin=PlotProject([x.Low(),y.High()],@config);end=PlotProject([x.High(),y.Low()],@config);
+        id=@"certified-region-@{node[:id]}";
+        rootBox=@trace ?: PlotOption(node,"rootbox",_) ?_ kind==:unique ?: node[:result][:box] ?_ _;
+        record={= id=id,classification=kind,box=node[:box],rootBox=rootBox,
+            topology=PlotOption(node,"topology",_),reason=PlotOption(node,"reason",_),
+            coordinates=:exactRational,display=:boxEnclosure };
+        rectangle=.Graphics.Rectangle(origin,[end[1]-origin[1],end[2]-origin[2]],{= fill=color,stroke="#64748b",width=1,opacity=1/2,hitId=id });
+        marks:=[rectangle];
+        rootBox!=_ ?: {;
+            rx=@rootBox[:axes][@xaxis].ToRationalInterval();
+            ry=@yaxis==_ ?: (-1/8):(1/8) ?_ @rootBox[:axes][@yaxis].ToRationalInterval();
+            a=PlotProject([rx.Low(),ry.High()],@config);b=PlotProject([rx.High(),ry.Low()],@config);
+            @marks ~= @marks.Push(.Graphics.Rectangle(a,[b[1]-a[1],b[2]-a[2]],{= fill=@color,stroke="#0f172a",width=2,hitId=@"@{@id}-root-enclosure" }));
+        } ?_ _;
+        @children ~= @children.Push(.Graphics.Group({= children=marks,metadata={= region=record } }));
+        @records ~= @records.Push(record);
+    };index+=1 };
+    legend=[{= label="Excluded",color="#64748b" },{= label="Unique root box",color="#15803d" },
+        {= label="Local implicit chart",color="#2563eb" },{= label="Unresolved",color="#b45309" }];
+    children~=children.Concat(legend.Map((entry,index)->.Graphics.Text(
+        [@config[:margin]+(index-1)*(@config[:width]-2*@config[:margin])/4,@config[:height]-8],entry[:label],
+        {= fill=entry[:color],size=10,anchor="start" })));
+    graphic=PlotFieldGraphic(:certifiedRegions,config,settings,children,{=
+        records=records,unresolvedRegions=result[:unresolved],status=result[:status],
+        evidence={= checker=checked,source={= }.Merge(result),axes=selected,projection=:coordinateProjection,distinctRootCount=_ },
+        sampling={= method=:checkedBoxes,certification=:retainedEvidence },rendering=:boxEnclosures,
+        legend=legend
+    });
+    graphic;
+};
+
 PlotPaletteIndex(value,minimum,maximum,count) -> minimum==maximum ?: (count+1)//2 ?_ {;
     index=((@value-@minimum)/(@maximum-@minimum)*(@count-1))//1+1;
     .Max(1,.Min(@count,index));
@@ -27440,8 +30456,158 @@ PlotEventView(result,settings,phase) -> {;
     PlotTrajectory(result[:solution],settings,phase,[result]);
 };
 
+
+PlotBudgetInteger(value,minimum,maximum,label) ?!- [
+    value ? :Integer ?_> .Error(@"@{label} must be an Integer"),
+    (value>=minimum&&value<=maximum) ?_> .Error(@"@{label} must be between @{minimum} and @{maximum}")
+] -> value;
+
+PlotBoundedRows(data,allowEmpty ?= _) ?!- [
+    data ? :Array ?_> .Error("bounded plot data must be an Array"),
+    data.Len()<=4096 ?_> .Error("bounded plot input exceeds 4096 rows"),
+    (allowEmpty||data.Len()>=2) ?_> .Error("bounded plot data needs at least two rows")
+] -> {;
+    previous:=_;
+    data.Map((row)->{;
+        row ? :Array ?_> .Error("bounded plot rows must be Arrays");
+        row.Len()==2 ?_> .Error("bounded plot rows must contain [x,y]");
+        x=PlotExact(row[1],"bounded plot x"); y=PlotExact(row[2],"bounded plot y");
+        (@previous==_||x>@previous) ?_> .Error("bounded plot x values must increase strictly");
+        @previous~=x; [x,y];
+    });
+};
+
+PlotDownsample(data,settings ?= {= },offset ?= 0) ?!- [
+    settings ? :Map ?_> .Error("downsample options must be a map"),
+    maximum=PlotBudgetInteger(PlotOption(settings,"maxpoints",256),4,1024,"maxPoints"),
+    rows=PlotBoundedRows(data),
+    count=rows.Len()
+] -> {;
+    indices:=[];
+    count<=maximum ?: {; @indices=@rows.Map((row,index)->index); } ?_ {;
+        @indices=[1]; buckets=(@maximum-2)//2; interior=@count-2;
+        {@ bucket=0; bucket<@buckets; {;
+            first=2+(bucket*@interior)//@buckets; last=1+((bucket+1)*@interior)//@buckets;
+            low:=first; high:=first;
+            {@ position=@first+1; position<=@last; {;
+                @rows[position][2]<@rows[@low][2] ?: {; @low~=@position; } ?_ _;
+                @rows[position][2]>@rows[@high][2] ?: {; @high~=@position; } ?_ _;
+            }; position+=1 };
+            @indices~=@indices.Push(.Min(low,high));
+            low!=high ?: {; @indices~=@indices.Push(.Max(@low,@high)); } ?_ _;
+        }; bucket+=1 };
+        @indices~=@indices.Push(@count);
+    };
+    retained=indices.Map((index)->@rows[index]);
+    records=indices.Map((index)->{= id=@"sample-@{@offset+index}",sourceIndex=@offset+index,point=@rows[index],status=:exact,evidenceLevel=:exactSample });
+    omitted=count-retained.Len();
+    .DeepMutable({= schema="rix.plot.samples@1",data=retained,records=records,
+        sampling={= schema="rix.plot.sampling-budget@1",method=:minmax_buckets,inputCount=count,retainedCount=retained.Len(),omittedCount=omitted,maxPoints=maximum,
+            evidenceLevel=:exactRetainedSamples,reconstruction=:uncertified,firstSourceIndex=offset+1,lastSourceIndex=offset+count,
+            disclosure=@"Retained @{retained.Len()} of @{count} exact input samples; omitted @{omitted}. Min/max buckets preserve endpoints and bucket extrema; connecting lines do not certify the omitted curve."
+        }
+    },_);
+};
+
+PlotBoundedLine(data,settings ?= {= },offset ?= 0,streamInfo ?= _) -> {;
+    selected=PlotDownsample(data,settings,offset);
+    sampling=streamInfo==_ ?: selected[:sampling] ?_ selected[:sampling].Merge({= stream=streamInfo,
+        disclosure=@"@{selected[:sampling][:disclosure]} Stream dropped @{streamInfo[:dropped]} older samples; retained tail is bounded by @{streamInfo[:capacity]}."
+    });
+    PlotGeneral(selected[:data],settings.Merge({= sampling=sampling,records=selected[:records],sampleids=selected[:records].Map((record)->record[:id]),style=PlotStyle(settings,"#2563eb",2).Merge({= hitId="bounded-line" }) }),:line);
+};
+
+PlotStream(capacity ?= 1024) ?!- [
+    capacity=PlotBudgetInteger(capacity,2,4096,"stream capacity")
+] -> .DeepMutable({= schema="rix.plot.stream@1",capacity=capacity,nextIndex=1,dropped=0,data=[] },_);
+
+PlotStreamValidate(state) ?!- [
+    state ? :Map ?_> .Error("plot stream requires a stream record"),
+    state[:schema]=="rix.plot.stream@1" ?_> .Error("plot stream schema mismatch"),
+    capacity=PlotBudgetInteger(state[:capacity],2,4096,"stream capacity"),
+    rows=PlotBoundedRows(state[:data],1),
+    rows.Len()<=capacity ?_> .Error("stream retained data exceeds capacity"),
+    state[:nextindex] ? :Integer ?_> .Error("stream nextIndex must be an Integer"),
+    state[:dropped] ? :Integer ?_> .Error("stream dropped must be an Integer"),
+    (state[:dropped]>=0&&state[:nextindex]==state[:dropped]+rows.Len()+1) ?_> .Error("stream sequence metadata is inconsistent")
+] -> rows;
+
+PlotStreamAppend(state,batch) ?!- [
+    old=PlotStreamValidate(state),
+    incoming=PlotBoundedRows(batch,1),
+    (old.Len()==0||incoming.Len()==0||incoming[1][1]>old.Last()[1]) ?_> .Error("stream x values must increase across batches")
+] -> {;
+    combined=old.Concat(incoming); drop=.Max(0,combined.Len()-state[:capacity]);
+    .DeepMutable({= schema="rix.plot.stream@1",capacity=state[:capacity],nextIndex=state[:nextindex]+incoming.Len(),dropped=state[:dropped]+drop,data=combined.Slice(drop+1) },_);
+};
+
+PlotStreamLine(state,settings ?= {= }) -> {;
+    rows=PlotStreamValidate(state);
+    PlotBoundedLine(rows,settings,state[:dropped],{= capacity=state[:capacity],dropped=state[:dropped],nextIndex=state[:nextindex] });
+};
+
+PlotHeatMapData(data,xDomain,yDomain,settings ?= {= }) ?!- [
+    settings ? :Map ?_> .Error("heat-map data options must be a map"),
+    maximum=PlotBudgetInteger(PlotOption(settings,"maxcells",256),1,1024,"maxCells"),
+    data ? :Array ?_> .Error("heat-map data must be an Array of rows"),
+    data.Len()>=1 ?_> .Error("heat-map data must contain rows"),
+    data.Len()<=4096 ?_> .Error("heat-map input exceeds 4096 cells"),
+    data[1] ? :Array ?_> .Error("heat-map rows must be Arrays"),
+    rows=data.Len(), columns=data[1].Len(),
+    (columns>=1&&rows*columns<=4096) ?_> .Error("heat-map input must contain 1..4096 cells"),
+    config=PlotFieldConfig(xDomain,yDomain,settings.Merge({= grid=[2,2] }))
+] -> {;
+    checked=data.Map((row)->{;
+        row ? :Array ?_> .Error("heat-map rows must be Arrays");
+        row.Len()==@columns ?_> .Error("heat-map rows must have equal length");
+        row.Map((value)->PlotExact(value,"heat-map value"));
+    });
+    stride:=1;
+    {@ iteration=1; ((@columns+@stride-1)//@stride)*((@rows+@stride-1)//@stride)>@maximum; {; @stride+=1; }; iteration+=1 };
+    records:=[];
+    {@ firstRow=1; firstRow<=@rows; {;
+        lastRow=.Min(@rows,firstRow+@stride-1);
+        {@ firstColumn=1; firstColumn<=@columns; {;
+            lastColumn=.Min(@columns,firstColumn+@stride-1); sum:=0; low:=@checked[@firstRow][firstColumn]; high:=low;
+            {@ r=@firstRow+0; r<=@lastRow; {;
+                {@ c=@firstColumn+0; c<=@lastColumn; {;
+                    v=@checked[@r][c]; @sum+=v; @low~=.Min(@low,v); @high~=.Max(@high,v);
+                }; c+=1 };
+            }; r+=1 };
+            count=(@lastRow-@firstRow+1)*(lastColumn-firstColumn+1);
+            @records~=@records.Push({= id=@"heatmap-source-@{@firstRow}-@{firstColumn}-@{@lastRow}-@{lastColumn}",sourceBounds=[[@firstRow,firstColumn],[@lastRow,lastColumn]],count=count,value=sum/count,minimum=low,maximum=high,status=count==1 ?: :exact ?_ :aggregated,evidenceLevel=:exactAggregate });
+        }; firstColumn+=@stride };
+    }; firstRow+=@stride };
+    paletteSpec=PlotReadColorScale(settings); palette=paletteSpec[:colors];
+    minimum=records.Map((record)->record[:minimum]).Reduce((a,b)->.Min(a,b),records[1][:minimum]); maximumValue=records.Map((record)->record[:maximum]).Reduce((a,b)->.Max(a,b),records[1][:maximum]);
+    colorDomain=PlotOption(settings,"colordomain");
+    colorDomain!=_ ?: {; bounds=PlotFixedYBounds(@colorDomain); @minimum=bounds[1]; @maximumValue=bounds[2]; } ?_ _;
+    paletteSpec[:minimum]!=_ ?: {; @minimum=@paletteSpec[:minimum]; @maximumValue=@paletteSpec[:maximum]; } ?_ _;
+    children=records.Map((record)->{;
+        bounds=record[:sourcebounds];
+        lower=[@config[:xmin]+(@config[:xmax]-@config[:xmin])*(bounds[1][2]-1)/@columns,@config[:ymin]+(@config[:ymax]-@config[:ymin])*(bounds[1][1]-1)/@rows];
+        upper=[@config[:xmin]+(@config[:xmax]-@config[:xmin])*bounds[2][2]/@columns,@config[:ymin]+(@config[:ymax]-@config[:ymin])*bounds[2][1]/@rows];
+        origin=PlotProject([lower[1],upper[2]],@config); end=PlotProject([upper[1],lower[2]],@config);
+        color=@paletteSpec[:kind]==:continuous ?: PlotContinuousColor(record[:value],@minimum,@maximumValue,@paletteSpec[:huerange]) ?_ @palette[PlotPaletteIndex(record[:value],@minimum,@maximumValue,@palette.Len())];
+        .Graphics.Rectangle(origin,[end[1]-origin[1],end[2]-origin[2]],{= fill=color,stroke=color,width=0,hitId=record[:id] });
+    });
+    PlotFieldGraphic(:heatmap,config.Merge({= columns=(columns+stride-1)//stride,rows=(rows+stride-1)//stride }),settings,children,{=
+        records=records,status=records.Len()==rows*columns ?: :exact ?_ :aggregated,evidence={= exactCells=rows*columns,exactAggregateMeans=records.Len(),plotAddsCertification=_ },
+        colorScale=paletteSpec.Merge({= minimum=minimum,maximum=maximumValue }),legend=[{= label="minimum",value=minimum,color=palette[1] },{= label="maximum",value=maximumValue,color=palette.Last() }],
+        sampling={= schema="rix.plot.sampling-budget@1",method=:block_mean,inputCount=rows*columns,retainedCount=records.Len(),maxCells=maximum,sourceShape=[rows,columns],stride=stride,reconstruction=:uncertified,
+            disclosure=@"Displayed @{records.Len()} blocks for @{rows*columns} exact grid cells. Each block retains its exact mean, minimum, maximum and source bounds; colors do not reconstruct within-block variation."
+        }
+    });
+};
+
 plotNamespace = {= };
 plotNamespace._proto = {=
+    Downsample=(self, data, options ?= {= })->PlotDownsample(data,options),
+    BoundedLine=(self, data, options ?= {= })->PlotBoundedLine(data,options),
+    Stream=(self, capacity ?= 1024)->PlotStream(capacity),
+    StreamAppend=(self, state, batch)->PlotStreamAppend(state,batch),
+    StreamLine=(self, state, options ?= {= })->PlotStreamLine(state,options),
+    HeatMapData=(self, data, xDomain, yDomain, options ?= {= })->PlotHeatMapData(data,xDomain,yDomain,options),
     Polynomial=(self, coefficients, domain, options ?= {= })->PlotPolynomial(coefficients, domain, options),
     PolynomialPOI=(self, coefficients, domain, options ?= {= })->PlotPolynomialPOI(coefficients, domain, options),
     Function=(self, fn, domain, options ?= {= })->PlotFunction(fn, domain, options),
@@ -27459,6 +30625,7 @@ plotNamespace._proto = {=
     EventPhasePortrait=(self, result, options ?= {= })->PlotEventView(result,options,1),
     LinkedTrajectory=(self, solution, options ?= {= })->PlotLinkedTrajectory(solution,options),
     LinkedEvents=(self, result, options ?= {= })->PlotLinkedEvents(result,options),
+    CertifiedRegions=(self,result,options ?= {= })->PlotCertifiedRegions(result,options),
     Implicit=(self, fn, xDomain, yDomain, options ?= {= })->PlotContourBuild(fn,xDomain,yDomain,options,:implicit),
     Inequality=(self, fn, xDomain, yDomain, options ?= {= })->PlotInequality(fn,xDomain,yDomain,options),
     Contour=(self, fn, xDomain, yDomain, options ?= {= })->PlotContourBuild(fn,xDomain,yDomain,options,:contour),
@@ -27656,6 +30823,7 @@ PolyFromAscending(coefficients, variable ?= :x, degreeBound ?= _, source ?= _, p
 PolyBuild(coefficientFunction, variable, degreeBound, source, provenance, reactive ?= 1) -> {;
     PolynomialValue = (argument) -> PolyEvaluateAscending(0 |> coefficientFunction, argument);
     PolynomialValue.schema = "rix.polynomial@1";
+    PolynomialValue.sourceIdentity = (unused)->_;
     PolynomialValue.variable = variable;
     PolynomialValue.degreeBound = degreeBound;
     PolynomialValue.canonical = 1;
@@ -27794,7 +30962,11 @@ PolyFromRecord(source, second) -> {;
     source.Has("coefficients") ?: _ ?_ .Error("Polynomial record requires coefficients");
     order = PolyOption(source, "order", :descending);
     variable = PolyOption(source, "variable", second == _ ?: :x ?_ second);
-    PolyFromAscending(PolyExactAscending(source[:coefficients], order), variable, _, _, [:record]);
+    coefficients=PolyExactAscending(source[:coefficients],order);
+    bound=PolyOption(source,"degreebound",coefficients.Len()-1);
+    (bound ? :Integer) && bound>=coefficients.Len()-1
+      ?_> .Error("Polynomial record degreeBound must be an Integer at least its coefficient degree");
+    PolyFromAscending(coefficients,variable,bound,_,[:record]);
 };
 
 PolyConstruct(source, second ?= _) -> {;
@@ -29979,16 +33151,16 @@ quaternionNamespace._proto={=
 };
 .Host.RegisterValue("quaternion",quaternionNamespace,"Certified quaternion facade and intrinsic slice functions",["Exact","Numerics"]);
 `, sourcePath: "bundled:quaternion", kind: "rix" });
-  catalog.addMetadata({ id: "radix", description: "Exact positional expansions, cloneable lazy digit streams, configurable formatting, and bounded period analysis.", kind: "rix", mount: "radix", exports: ["Expansion", "Digits", "DigitStream", "PeriodLength", "PeriodInfo", "ToString"], groups: ["Exact", "Radix"], permissions: [], provides: ["rix.radix@1", "rix.radix.digit-stream@1"], schemas: ["rix.radix.expansion@1", "rix.radix.digit-stream@1", "rix.radix.period-info@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:radix" }, { source: `/**
+  catalog.addMetadata({ id: "radix", description: "Exact positional expansions, cloneable lazy digit streams, configurable formatting, and bounded period analysis.", kind: "rix", mount: "radix", exports: ["System", "Define", "Parse", "Format", "Places", "Locale", "View", "Expansion", "Digits", "DigitStream", "PeriodLength", "PeriodInfo", "ToString"], groups: ["Exact", "Radix"], permissions: [], provides: ["rix.radix@1", "rix.radix.digit-stream@1"], schemas: ["rix.numeral-system@1", "ratmath.numeral-system@1", "ratmath.numeral-expansion@1", "rix.radix.expansion@1", "rix.radix.digit-stream@1", "rix.radix.period-info@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:radix" }, { source: `/**
 id: radix
 description: Exact positional expansions, cloneable lazy digit streams, configurable formatting, and bounded period analysis.
 kind: rix
 mount: radix
-exports: [Expansion, Digits, DigitStream, PeriodLength, PeriodInfo, ToString]
+exports: [System, Define, Parse, Format, Places, Locale, View, Expansion, Digits, DigitStream, PeriodLength, PeriodInfo, ToString]
 groups: [Exact, Radix]
 permissions: []
 provides: [rix.radix@1, rix.radix.digit-stream@1]
-schemas: [rix.radix.expansion@1, rix.radix.digit-stream@1, rix.radix.period-info@1]
+schemas: [rix.numeral-system@1, ratmath.numeral-system@1, ratmath.numeral-expansion@1,rix.radix.expansion@1, rix.radix.digit-stream@1, rix.radix.period-info@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -30395,8 +33567,58 @@ RadixRenderText(value, baseValue ?= 10, options ?= _) -> {;
           ?_ @"@{negative}@{whole}.@{prefix}…");
 };
 
+RadixSystem(name,spec) -> {;
+    name ? :String ?_> .Error("Numeral label must be a String");
+    (name.Len()>=1 && name.Len()<=32 && "abcdefghijklmnopqrstuvwxyz".Includes(name.Slice(1,2)) && name.Split().Reduce((valid,character)->valid && "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".Includes(character),1)) ?_> .Error("Numeral label must start lowercase and contain at most 32 letters/digits");
+    core=.NumeralSystem(spec);
+    .ImmutableValue({= schema="rix.numeral-system@1",name=name,system=core });
+};
+RadixRequireSystem(system) -> {;
+    ((system ? :Map) && system[:schema]=="rix.numeral-system@1") ?_> .Error("Unsupported numeral-system descriptor");
+    RadixSystem(system[:name],system[:system]);
+};
+RadixParse(system,body,modifiers ?= [],info ?= _) -> {;
+    checked=RadixRequireSystem(system);
+    modifiers.Len()==0 ?_> .Error("Numeral parsers do not accept modifiers");
+    .NumeralParse(checked[:system],body);
+};
+RadixFormat(system,value,options ?= {= }) -> {;
+    checked=RadixRequireSystem(system);
+    result=.NumeralFormat(checked[:system],value,options);
+    spelling=result[:spelling];name=system[:name];
+    literal=spelling==_ ?: _ ?_ "\`."+name+":"+spelling+"\`";
+    .ImmutableValue(result.Merge({= label=name,literal=literal }));
+};
+RadixDefine(system) -> {;
+    RadixRequireSystem(system);
+    (.Host.Find(system[:name])==_ && .Core.Find(system[:name])==_) ?_> .Error("Numeral parser label is already registered");
+    parser=.NotationParser((body,modifiers,info)->RadixParse(@system,body,modifiers,info));
+    .Host.RegisterValue(system[:name],parser,"Explicit exact numeral parser",["Exact","Radix"]);
+    system;
+};
+RadixView(system,source,options ?= {= }) -> {;
+    checked=RadixRequireSystem(system);
+    places=.NumeralPlaces(checked[:system],source);
+    expansion=RadixFormat(system,places[:value],options);
+    rows=places[:places].Map((place)->[place[:token],place[:digit],place[:exponent],place[:weight],place[:contribution]]);
+    carryRows=expansion[:integer]==_ ?: [] ?_ expansion[:integer][:carries].Map((step)->[step[:before],step[:digit],step[:radix],step[:after]]);
+    .Fragment([.Heading(1,"Numeral system: "+system[:name]),.Paragraph(@"Exact value: @{places[:value]}; status: @{expansion[:status]}"),
+      .Paragraph(expansion[:literal]==_ ?: "Digit budget exhausted; the retained prefix is not a complete numeral." ?_ expansion[:literal]),
+      .Paragraph(places[:diagnostic]==_ ?: "Place contributions add to the exact source value." ?_ places[:diagnostic]),
+      .Table(["Token","Digit","Place","Weight","Contribution"],rows),
+      .Heading(2,"Integer carry steps"),.Paragraph("Every row satisfies before = digit + signed base times after."),
+      .Table(["Before","Digit","Signed base","After"],carryRows)],{= schema="rix.numeral-view@1",system=system,source=source,expansion=expansion });
+};
+
 radixNamespace = {= };
 radixNamespace._proto = {=
+    System = (self,name,spec) -> RadixSystem(name,spec),
+    Define = (self,system) -> RadixDefine(system),
+    Parse = (self,system,source) -> RadixParse(system,source),
+    Format = (self,system,value,options ?= {= }) -> RadixFormat(system,value,options),
+    Places = (self,system,source) -> .NumeralPlaces(RadixRequireSystem(system)[:system],source),
+    Locale = (self,system,source,options,direction ?= "format") -> .NumeralLocale(RadixRequireSystem(system)[:system],source,options,direction),
+    View = (self,system,source,options ?= {= }) -> RadixView(system,source,options),
     Expansion = (self, value, base ?= 10, options ?= _) -> RadixExpansion(value, base, options),
     Digits = (self, value, base ?= 10, count ?= 1) -> RadixDigits(value, base, count),
     DigitStream = (self, value, base ?= 10, options ?= _) -> RadixDigitStream(value, base, options),
@@ -31380,17 +34602,17 @@ RatfunSpecConversion=(value,variable ?= _)->RatfunFromSpec(value,variable);
 .Host.RegisterMethod("structural_literal","R",RatfunConversion,"ratfun","ratfun");
 .Host.RegisterMethod("symbolic_spec","R",RatfunSpecConversion,"ratfun","ratfun");
 `, sourcePath: "bundled:ratfun", kind: "rix" });
-  catalog.addMetadata({ id: "scene3d", description: "Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.", kind: "rix", mount: "scene3d", exports: ["Scene", "Group", "Transform", "ClipPlane", "Clip", "Mesh", "Polyline", "PointCloud", "ParametricCurve", "ParametricSurface", "Axes", "Annotation", "AnnotationPolicy", "Interaction", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "OrbitCamera", "Realize", "Project", "Snapshot"], groups: ["Scene3D", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@1"], provides: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1", "rix.scene3d.snapshot@1", "rix.scene3d.orbit@1", "rix.scene3d.interaction@1", "rix.scene3d.annotation-policy@1", "rix.scene3d.surface-sampling@1", "rix.scene3d.clip-plane@1", "rix.scene3d.material@1"], schemas: ["rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1", "rix.scene3d.snapshot@1", "rix.scene3d.orbit@1", "rix.scene3d.interaction@1", "rix.scene3d.annotation-policy@1", "rix.scene3d.surface-sampling@1", "rix.scene3d.clip-plane@1", "rix.scene3d.material@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { source: `/**
+  catalog.addMetadata({ id: "scene3d", description: "Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.", kind: "rix", mount: "scene3d", exports: ["Trajectory", "EventTrajectory", "RegionView", "ImplicitSurface", "Volume", "VolumeView", "Slice", "CellBox", "UnitQuaternion", "QuaternionBlend", "QuaternionTransform", "LinkedViews", "Scene", "Group", "Transform", "ClipPlane", "Clip", "Mesh", "Polyline", "PointCloud", "ParametricCurve", "ParametricSurface", "Axes", "Annotation", "AnnotationPolicy", "Interaction", "Material", "AmbientLight", "DirectionalLight", "PointLight", "PerspectiveCamera", "OrthographicCamera", "OrbitCamera", "Realize", "Project", "Snapshot"], groups: ["Scene3D", "Graphics", "Exact"], permissions: [], requires: ["rix.numerics@2"], provides: ["rix.geometry.implicit-region@1", "rix.scene3d.implicit-view@1", "rix.scene3d.volume@1", "rix.scene3d.volume-slice@1", "rix.scene3d.trajectory@1", "rix.scene3d.event-overlay@1", "rix.scene3d.unit-quaternion@1", "rix.scene3d.quaternion-interpolation@1", "rix.scene3d.quaternion-transform@1", "rix.graphics.linked-views@1", "rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1", "rix.scene3d.snapshot@1", "rix.scene3d.orbit@1", "rix.scene3d.interaction@1", "rix.scene3d.annotation-policy@1", "rix.scene3d.surface-sampling@1", "rix.scene3d.clip-plane@1", "rix.scene3d.material@1"], schemas: ["rix.geometry.implicit-region@1", "rix.scene3d.implicit-view@1", "rix.scene3d.volume@1", "rix.scene3d.volume-slice@1", "rix.scene3d.trajectory@1", "rix.scene3d.event-overlay@1", "rix.scene3d.unit-quaternion@1", "rix.scene3d.quaternion-interpolation@1", "rix.scene3d.quaternion-transform@1", "rix.graphics.linked-views@1", "rix.scene3d@1", "rix.scene3d.realized@1", "rix.scene3d.projected@1", "rix.scene3d.snapshot@1", "rix.scene3d.orbit@1", "rix.scene3d.interaction@1", "rix.scene3d.annotation-policy@1", "rix.scene3d.surface-sampling@1", "rix.scene3d.clip-plane@1", "rix.scene3d.material@1"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:scene3d" }, { source: `/**
 id: scene3d
 description: Pure-RiX exact retained 3D scenes, explicit realization and projection, and portable Graphics snapshots.
 kind: rix
 mount: scene3d
-exports: [Scene, Group, Transform, ClipPlane, Clip, Mesh, Polyline, PointCloud, ParametricCurve, ParametricSurface, Axes, Annotation, AnnotationPolicy, Interaction, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, OrbitCamera, Realize, Project, Snapshot]
+exports: [Trajectory, EventTrajectory, RegionView, ImplicitSurface, Volume, VolumeView, Slice, CellBox, UnitQuaternion, QuaternionBlend, QuaternionTransform, LinkedViews, Scene, Group, Transform, ClipPlane, Clip, Mesh, Polyline, PointCloud, ParametricCurve, ParametricSurface, Axes, Annotation, AnnotationPolicy, Interaction, Material, AmbientLight, DirectionalLight, PointLight, PerspectiveCamera, OrthographicCamera, OrbitCamera, Realize, Project, Snapshot]
 groups: [Scene3D, Graphics, Exact]
 permissions: []
-requires: [rix.numerics@1]
-provides: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1, rix.scene3d.clip-plane@1, rix.scene3d.material@1]
-schemas: [rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1, rix.scene3d.clip-plane@1, rix.scene3d.material@1]
+requires: [rix.numerics@2]
+provides: [rix.geometry.implicit-region@1, rix.scene3d.implicit-view@1, rix.scene3d.volume@1, rix.scene3d.volume-slice@1, rix.scene3d.trajectory@1, rix.scene3d.event-overlay@1, rix.scene3d.unit-quaternion@1, rix.scene3d.quaternion-interpolation@1, rix.scene3d.quaternion-transform@1, rix.graphics.linked-views@1, rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1, rix.scene3d.clip-plane@1, rix.scene3d.material@1]
+schemas: [rix.geometry.implicit-region@1, rix.scene3d.implicit-view@1, rix.scene3d.volume@1, rix.scene3d.volume-slice@1, rix.scene3d.trajectory@1, rix.scene3d.event-overlay@1, rix.scene3d.unit-quaternion@1, rix.scene3d.quaternion-interpolation@1, rix.scene3d.quaternion-transform@1, rix.graphics.linked-views@1, rix.scene3d@1, rix.scene3d.realized@1, rix.scene3d.projected@1, rix.scene3d.snapshot@1, rix.scene3d.orbit@1, rix.scene3d.interaction@1, rix.scene3d.annotation-policy@1, rix.scene3d.surface-sampling@1, rix.scene3d.clip-plane@1, rix.scene3d.material@1]
 snapshot: true
 deterministic: true
 defaultEnabled: false
@@ -31931,32 +35153,32 @@ S3MeshSegments(triangles) -> {;
     segments;
 };
 
-S3PrimitiveFields(child,clipPlanes ?= []) -> {=
+S3PrimitiveFields(child,clipPlanes ?= [],transformProvenance ?= []) -> {=
     pickid=S3Option(child,"pickid"),
     label=S3Option(child,"label"),
     metadata=S3Option(child,"metadata"),
     interaction=S3Option(child,"interaction"),
-    annotationPolicy=S3Option(child,"annotationpolicy"),clipPlanes=clipPlanes
+    annotationPolicy=S3Option(child,"annotationpolicy"),clipPlanes=clipPlanes,transformProvenance=transformProvenance
 };
 
-S3Collect(children, parent, clipPlanes ?= []) -> {;
+S3Collect(children, parent, clipPlanes ?= [],transformProvenance ?= []) -> {;
     result := [];
     {@ index = 1; index <= @children.Len(); {;
         child = @children[index];
         kind = child[:kind];
         kind == :group
-          ?: {; @result ~= @result.Concat(S3Collect(@child[:children], @parent, @clipPlanes)); }
+          ?: {; @result ~= @result.Concat(S3Collect(@child[:children], @parent, @clipPlanes,@transformProvenance)); }
           ?_ kind == :transform
-               ?: {; @result ~= @result.Concat(S3Collect(@child[:children], S3Multiply4(@parent, @child[:matrix]), @clipPlanes)); }
+               ?: {; @result ~= @result.Concat(S3Collect(@child[:children], S3Multiply4(@parent, @child[:matrix]), @clipPlanes,@transformProvenance.Push({= matrix=@child[:matrix],metadata=@child[:metadata] }))); }
                ?_ kind == :clip
-                    ?: {; @result ~= @result.Concat(S3Collect(@child[:children],@parent,@clipPlanes.Concat(@child[:planes]))); }
+                    ?: {; @result ~= @result.Concat(S3Collect(@child[:children],@parent,@clipPlanes.Concat(@child[:planes]),@transformProvenance)); }
                ?_ kind == :mesh
                     ?: {;
                         points = @child[:vertices].Map((point) -> S3TransformPoint(@parent, point));
                         @result ~= @result.Push(.DeepMutable({=
                             kind=:mesh, points=points, segments=S3MeshSegments(@child[:triangles]),
                             triangles=@child[:triangles], style=@child[:style]
-                        }.Merge(S3PrimitiveFields(@child,@clipPlanes)), _));
+                        }.Merge(S3PrimitiveFields(@child,@clipPlanes,@transformProvenance)), _));
                     }
                     ?_ kind == :polyline
                          ?: {;
@@ -31966,18 +35188,18 @@ S3Collect(children, parent, clipPlanes ?= []) -> {;
                                  @segments ~= @segments.Push([pointIndex, pointIndex+1]);
                              }; pointIndex += 1 };
                              (@child[:closed]==1 && points.Len() > 2) ?: {; @segments ~= @segments.Push([@points.Len(),1]); } ?_ _;
-                             @result ~= @result.Push(.DeepMutable({= kind=:lines, points=points, segments=segments, style=@child[:style] }.Merge(S3PrimitiveFields(@child,@clipPlanes)), _));
+                             @result ~= @result.Push(.DeepMutable({= kind=:lines, points=points, segments=segments, style=@child[:style] }.Merge(S3PrimitiveFields(@child,@clipPlanes,@transformProvenance)), _));
                          }
                          ?_ kind == :point_cloud
                               ?: {; @result ~= @result.Push(.DeepMutable({=
                                   kind=:points, points=@child[:points].Map((point) -> S3TransformPoint(@parent, point)),
                                   radius=@child[:radius], style=@child[:style]
-                              }.Merge(S3PrimitiveFields(@child,@clipPlanes)), _)); }
+                              }.Merge(S3PrimitiveFields(@child,@clipPlanes,@transformProvenance)), _)); }
                               ?_ kind == :annotation
                                    ?: {; @result ~= @result.Push(.DeepMutable({=
                                        kind=:annotation,points=[S3TransformPoint(@parent,@child[:position])],
                                        text=@child[:text],style=@child[:style]
-                                   }.Merge(S3PrimitiveFields(@child,@clipPlanes)),_)); }
+                                   }.Merge(S3PrimitiveFields(@child,@clipPlanes,@transformProvenance)),_)); }
                               ?_ ((kind == :material || kind == :camera || kind == :clip_plane)
                                   ?: _
                                   ?_ .Error(@"Unsupported Scene3D node '@{kind}'"));
@@ -32106,7 +35328,7 @@ S3Picking(primitives) -> {;
         id != _ ?: {;
             @result.Has(@id) ?: .Error(@"Duplicate Scene3D picking id '@{@id}'") ?_ _;
             @result ~= @result.Set(@id,{=
-                primitive=@index,kind=@primitive[:kind],label=@primitive[:label],interaction=@primitive[:interaction]
+                primitive=@index,kind=@primitive[:kind],label=@primitive[:label],interaction=@primitive[:interaction],metadata=@primitive[:metadata],transformProvenance=@primitive[:transformProvenance]
             });
         } ?_ _;
     }; index+=1 };
@@ -32244,7 +35466,9 @@ S3HexByte(value) -> {;
 };
 
 S3LitColor(style, triangle, lights) -> {;
-    normal = S3Normalize(S3Cross(S3Subtract(triangle[2],triangle[1]),S3Subtract(triangle[3],triangle[1])), "Scene3D triangle");
+    cross=S3Cross(S3Subtract(triangle[2],triangle[1]),S3Subtract(triangle[3],triangle[1]));
+    S3Dot(cross,cross)>0 ?_> style[:color];
+    normal = S3Normalize(cross, "Scene3D triangle");
     center = [1,2,3].Map((coordinate) -> (triangle[1][coordinate]+triangle[2][coordinate]+triangle[3][coordinate])/3);
     illumination := [0,0,0];
     active = lights.Len()>0 ?: lights ?_ [S3AmbientLight()];
@@ -32266,7 +35490,7 @@ S3LitColor(style, triangle, lights) -> {;
 
 S3ProjectedFields(primitive, sourcePrimitive) -> {=
     pickid=primitive[:pickid],label=primitive[:label],sourcePrimitive=sourcePrimitive,
-    metadata=primitive[:metadata],interaction=primitive[:interaction],annotationPolicy=primitive[:annotationPolicy]
+    metadata=primitive[:metadata],interaction=primitive[:interaction],annotationPolicy=primitive[:annotationPolicy],transformProvenance=primitive[:transformProvenance]
 };
 
 S3ProjectedPicking(primitives) -> {;
@@ -32278,7 +35502,7 @@ S3ProjectedPicking(primitives) -> {;
             existing = @result.Has(@id) ?: @result[@id] ?_ {= indices=[],kind=@primitive[:kind],label=@primitive[:label] };
             @result ~= @result.Set(@id,existing.Merge({=
                 indices=existing[:indices].Push(@index),
-                interaction=@primitive[:interaction]
+                interaction=@primitive[:interaction],metadata=@primitive[:metadata],transformProvenance=@primitive[:transformProvenance]
             }));
         } ?_ _;
     }; index+=1 };
@@ -32384,17 +35608,21 @@ S3Project(scene, options ?= {= }) -> {;
     }, _);
 };
 
+S3SnapshotStyle(primitive,fill ?= _,color ?= _)->{;
+    style=S3StyleMap(primitive[:style],fill,color);
+    primitive[:pickid]==_ ?: style ?_ style.Merge({= hitId=primitive[:pickid] });
+};
 S3Snapshot(scene, options ?= {= }) -> {;
     projected=S3Project(scene,options);
     children := [];
     {@ index=1; index<=@projected[:primitives].Len(); {;
         primitive=@projected[:primitives][index];
         primitive[:kind]==:face
-          ?: {; color=S3LitColor(@primitive[:style],@primitive[:worldPoints],@scene[:lights]); @children ~= @children.Push(.Graphics.Path(@primitive[:points],S3StyleMap(@primitive[:style],1,color))); }
+          ?: {; color=S3LitColor(@primitive[:style],@primitive[:worldPoints],@scene[:lights]); @children ~= @children.Push(.Graphics.Path(@primitive[:points],S3SnapshotStyle(@primitive,1,color))); }
           ?_ primitive[:kind]==:segment
-               ?: {; @children ~= @children.Push(.Graphics.Path(@primitive[:points],S3StyleMap(@primitive[:style]))); }
+               ?: {; @children ~= @children.Push(.Graphics.Path(@primitive[:points],S3SnapshotStyle(@primitive))); }
                ?_ primitive[:kind]==:point
-                    ?: {; @children ~= @children.Push(.Graphics.Circle(@primitive[:point],@primitive[:radius],S3StyleMap(@primitive[:style],1))); }
+                    ?: {; @children ~= @children.Push(.Graphics.Circle(@primitive[:point],@primitive[:radius],S3SnapshotStyle(@primitive,1))); }
                     ?_ primitive[:kind]==:annotation
                          ?: {;
                              policy=@primitive[:annotationpolicy];
@@ -32404,25 +35632,191 @@ S3Snapshot(scene, options ?= {= }) -> {;
                                  }));
                              } ?_ _;
                              @children ~= @children.Push(.Graphics.Text(@primitive[:point],@primitive[:text],{=
-                                 fill=@primitive[:style][:color],size=@primitive[:style][:size],anchor=@primitive[:style][:anchor],weight=@primitive[:style][:weight]
+                                 fill=@primitive[:style][:color],size=@primitive[:style][:size],anchor=@primitive[:style][:anchor],weight=@primitive[:style][:weight],hitId=@primitive[:pickid]
                              }));
                          }
                     ?_ _;
     }; index+=1 };
+    retainedPicking=scene[:realized][:picking];
+    retainedPicking.Reduce((ignored,pick,id)->projected[:picking].Has(id) ?: _ ?_ {;
+        @children~=@children.Push(.Graphics.Group([],{= hitId=@id },{= sourcePicking=@pick,visibility=:outsideProjection }));
+    },_);
     diagnostic=(projected[:mode]=="wireframe"&&scene[:lights].Len()>0)
       ?: [{= level="info",code="scene3d-wireframe-ignores-lights",message="Wireframe snapshots do not evaluate Scene3D lights." }]
       ?_ [];
+    metadata=S3Option(scene,"metadata",{= });metadata=metadata==_ ?: {= } ?_ metadata;
+    uncertainty=S3Option(metadata,"uncertainty",[]).Concat(S3Option(metadata,"omitted",[]).Map((record)->{= classification=:displayOmission,source=record }));
+    uncertainty.Len()>0 ?: {; @diagnostic~=@diagnostic.Push({= level="warning",code="scene3d-unresolved-source",message="This view retains unresolved source regions; projection adds no mathematical certificate." }); } ?_ _;
     {=
         type="scene3d_snapshot", schema="rix.scene3d.snapshot@1",
-        value=.Graphics.Graphic(projected[:size],children,{= schema="rix.graphics@1",source="rix.scene3d@1",mode=projected[:mode] }),
-        resolved=1, uncertainty=[], work=projected[:work],
+        value=.Graphics.Graphic(projected[:size],children,{= schema="rix.graphics@1",source="rix.scene3d@1",mode=projected[:mode],sceneMetadata=metadata,picking=projected[:picking],retainedPicking=retainedPicking,uncertainty=uncertainty,projectionAddsCertification=_ }),
+        resolved=uncertainty.Len()==0, uncertainty=uncertainty, work=projected[:work],
         source={= schema="rix.scene3d@1",projection=projected[:camera][:projection],mode=projected[:mode],approximation=projected[:approximation] },
         diagnostics=diagnostic, picking=projected[:picking], projected=projected
     };
 };
 
+## Certified source adapters retain whole enclosures; projection adds no certificate.
+S3Limit(value,label,maximum ?= 1024) -> {; count=S3Integer(value,label);count>=1&&count<=maximum ?_> .Error(@"@{label} is outside the work budget");count; };
+S3Interval(value)-> value ? :RationalInterval ?: value ?_ {; exact=S3Exact(@value,"Scene3D enclosure");exact:exact; };
+S3BoxMesh(bounds,options ?= {= })->{;
+    bounds.Len()==3 ?_> .Error("Scene3D CellBox requires three intervals");
+    ranges=bounds.Map((value)->S3Interval(value));.ValidatedClaimEqual(ranges,ranges);vertices:=[];
+    {@ corner=0;corner<8;{;
+        @vertices~=@vertices.Push([1,2,3].Map((axis)->(corner//(2^(axis-1)))%2==0 ?: @ranges[axis].Low() ?_ @ranges[axis].High()));
+    };corner+=1};
+    S3Mesh(vertices,[[1,2,4],[1,4,3],[5,7,8],[5,8,6],[1,5,6],[1,6,2],[3,4,8],[3,8,7],[1,3,7],[1,7,5],[2,6,8],[2,8,4]],options);
+};
+S3BoundsHull(boxes)->[1,2,3].Map((axis)->boxes.Reduce((range,bounds)->.Min(range.Low(),bounds[@axis].Low()):.Max(range.High(),bounds[@axis].High()),boxes[1][axis]));
+S3RegionView(region,options ?= {= })->{;
+    .ImplicitRegionCheck(region)[:accepted]==1 ?_> .Error("Scene3D region evidence must replay before viewing");
+    region[:variables].Len()==3 ?_> .Error("Scene3D region view requires three explicit coordinates");
+    maximum=S3Limit(S3Option(options,"maxvisiblecells",64),"Scene3D maxVisibleCells",256);
+    id=S3Option(options,"id","region");
+    leaves=region[:inside].Concat(region[:unresolved]);
+    showExcluded=S3Option(options,"showexcluded",_);leaves=showExcluded ?: leaves.Concat(region[:excluded]) ?_ leaves;
+    children:=[];records:=[];omitted:=[];
+    {@ index=1;index<=@leaves.Len();{;
+        leaf=@leaves[index];bounds=@region[:variables].Map((name)->leaf[:box][:axes][name].ToRationalInterval());
+        semantic=@"@{@id}.@{leaf[:id]}";classification=leaf[:classification];
+        record={= id=semantic,sourceId=leaf[:id],bounds=bounds,classification=classification,certified=S3Option(leaf,"certified",_),sourceAddsRootExistence=_,topology=:unproved };
+        @records~=@records.Push(record);
+        index<=@maximum ?: {;
+            color=@classification==:inside ?: "#047857" ?_ (@classification==:excluded ?: "#cbd5e1" ?_ "#d97706");
+            @children~=@children.Push(S3BoxMesh(@bounds,{= id=@semantic,color=color,opacity=1/4,label=@"@{@classification}: @{@leaf[:id]}",metadata=@record,
+                interaction=S3InteractionPolicy({= events=["select"],selection="single",payload=@record }) }));
+        } ?_ {; @omitted~=@omitted.Push(@record); };
+    };index+=1};
+    omitted.Len()>0 ?: {;
+        hull=S3BoundsHull(@omitted.Map((record)->record[:bounds]));
+        @children~=@children.Push(S3BoxMesh(hull,{= id=@"@{@id}.omitted",color="#64748b",opacity=1/5,
+            label=@"Conservative cover of @{@omitted.Len()} omitted cells",metadata={= classification=:omittedCover,records=@omitted,bounds=hull,certified=1 } }));
+    } ?_ _;
+    rootBounds=region[:variables].Map((name)->region[:inputBox][:axes][name].ToRationalInterval());
+    children~=children.Push(S3Annotation(rootBounds.Map((range)->range.High()),"Green: inside; amber: unresolved; gray: omitted cover",{= id=@"@{id}.legend",size=11,policy=S3AnnotationPolicy({= offset=S3Option(options,"legendoffset",[0,0]) }) }));
+    metadata={= schema="rix.scene3d.implicit-view@1",source=region,records=records,uncertainty=region[:unresolved],
+        unresolvedCount=region[:unresolved].Len(),omitted=omitted,displayAddsCertification=_,topology=:unproved,
+        work={= visibleCells=.Min(maximum,leaves.Len()),maxVisibleCells=maximum,omittedCells=omitted.Len(),triangles=12*(.Min(maximum,leaves.Len())+(omitted.Len()>0 ?: 1 ?_ 0)) } };
+    S3Scene(children,options.Merge({= metadata=metadata }));
+};
+S3ImplicitSurface(expression,box,options ?= {= })->S3RegionView(.ImplicitRegion(expression,box,options.Merge({= relation=:eq })),options);
+S3Volume(expression,box,options ?= {= })->{;
+    region=.ImplicitRegion(expression,box,options.Merge({= relation=S3Option(options,"relation",:le) }));
+    region[:variables].Len()==3 ?_> .Error("Scene3D Volume requires three coordinates");
+    .ImmutableValue({= schema="rix.scene3d.volume@1",region=region,interpretation=:implicitSetCover,topology=:unproved });
+};
+S3VolumeView(volume,options ?= {= })->{;
+    volume[:schema]=="rix.scene3d.volume@1" ?_> .Error("Scene3D VolumeView requires a volume record");S3RegionView(volume[:region],options);
+};
+S3VolumeSlice(volume,axis,coordinate,options ?= {= })->{;
+    volume[:schema]=="rix.scene3d.volume@1" ?_> .Error("Scene3D Slice requires a volume record");
+    region=volume[:region];.ImplicitRegionCheck(region)[:accepted]==1 ?_> .Error("Scene3D volume evidence changed");
+    region[:variables].Includes(axis) ?_> .Error("Scene3D slice axis is not a volume coordinate");
+    value=S3Exact(coordinate,"Scene3D slice coordinate");range=region[:inputBox][:axes][axis].ToRationalInterval();
+    value>=range.Low()&&value<=range.High() ?_> .Error("Scene3D slice coordinate is outside the original volume");
+    source=region[:inputBox][:axes].Set(axis,value:value);settings=region[:evidence][:options].Merge(options);
+    sliced=.ImplicitRegion(region[:evidence][:expression],source,settings);
+    .ImmutableValue({= schema="rix.scene3d.volume-slice@1",source=volume,axis=axis,coordinate=value,region=sliced,interpretation=:coordinateSection,projection=_ });
+};
+S3TrajectoryAxes(solution,options)->{;
+    dimension=solution[:stateNames].Len();fallback=dimension>=3 ?: [1,2,3] ?_ (dimension==2 ?: [0,1,2] ?_ [0,1,_]);
+    axes=S3Option(options,"axes",fallback);axes.Len()==3 ?_> .Error("Scene3D trajectory axes must have three entries");
+    axes.Map((axis)->axis==_ ?: _ ?_ {; exact=S3Integer(@axis,"Scene3D trajectory axis");exact>=0&&exact<=@dimension ?_> .Error("Scene3D trajectory axis is out of range");exact; });
+};
+S3TrajectoryBounds(segment,axes)->axes.Map((axis)->axis==_ ?: (0:0) ?_ (axis==0 ?: segment[:tStart]:segment[:tEnd] ?_ segment[:tube][axis]));
+S3TrajectoryPoint(time,state,axes)->axes.Map((axis)->axis==_ ?: 0 ?_ (axis==0 ?: time ?_ state[axis]));
+S3Trajectory(solution,options ?= {= },events ?= [])->{;
+    solution[:schema]=="rix.ode.solution@1" ?_> .Error("Scene3D Trajectory requires an ODE solution");
+    .ValidatedClaimEqual(solution,solution);.ValidatedClaimEqual(events,events);axes=S3TrajectoryAxes(solution,options);
+    maximum=S3Limit(S3Option(options,"maxsegments",128),"Scene3D maxSegments",1024);
+    id=S3Option(options,"id","trajectory");children:=[];records:=[];uncertainty:=[];omitted:=[];
+    {@ index=1;index<=@solution[:segments].Len();{;
+        segment=@solution[:segments][index];semantic=@"@{@id}.segment.@{index}";
+        certified=segment[:certified]==1;approximate=segment[:segmentKind]==:approximate;
+        classification=certified ?: :certifiedTube ?_ (approximate ?: :approximatePath ?_ :unresolvedTrajectory);
+        record={= id=semantic,sourceIndex=index,classification=classification,certified=certified,interval=segment[:tStart]:segment[:tEnd],axes=@axes,displayAddsCertification=_ };
+        @records~=@records.Push(record);
+        index<=@maximum ?: {;
+            @certified ?: {;
+                bounds=S3TrajectoryBounds(@segment,@axes);
+                @children~=@children.Push(S3BoxMesh(bounds,{= id=@semantic,color="#047857",opacity=1/4,label=@"Certified source tube @{@index}",metadata=@record.Merge({= bounds=bounds }) }));
+            } ?_ (@approximate ?: {;
+                points=[S3TrajectoryPoint(@segment[:tStart],@segment[:stateStart],@axes),S3TrajectoryPoint(@segment[:tEnd],@segment[:stateEnd],@axes)];
+                @children~=@children.Push(S3Polyline(points,{= id=@semantic,color="#7c3aed",width=2,label=@"Approximate source segment @{@index}",metadata=@record }));
+            } ?_ {; @uncertainty~=@uncertainty.Push(@record); });
+        } ?_ {; @omitted~=@omitted.Push(@record);@uncertainty~=@uncertainty.Push(@record); };
+    };index+=1};
+    solution[:status]==:partial ?: {; @uncertainty~=@uncertainty.Push({= classification=:unresolvedTimeSuffix,interval=@solution[:coveredInterval].End():@solution[:interval].End(),spatialBound=_ }); } ?_ _;
+    eventCount=events.Reduce((count,event)->count+event[:candidates].Len(),0);
+    eventMaximum=S3Limit(S3Option(options,"maxevents",128),"Scene3D maxEvents",1024);eventCount<=eventMaximum ?_> .Error("Scene3D event overlay budget exceeded; retain event record or increase maxEvents");
+    events.Reduce((ignored,event)->{;
+        .ValidatedClaimEqual(event[:solution],@solution) ?_> .Error("Scene3D event source does not match trajectory");
+        event[:candidates].Reduce((ignored,candidate,index)->{;
+            sourceIndex=candidate[:segment];segment=@solution[:segments][sourceIndex];
+            metadata={= schema="rix.scene3d.event-overlay@1",event=candidate,sourceIndex=sourceIndex,axes=@axes,displayAddsCertification=_ };
+            semantic=@"@{@id}.event.@{@event[:event][:name]}.@{index}";
+            segment[:certified]==1 ?: {;
+                @children~=@children.Push(S3BoxMesh(S3TrajectoryBounds(@segment,@axes),{= id=@semantic,color="#be123c",opacity=1/3,label=@"Event source enclosure @{@index}",metadata=@metadata }));
+            } ?_ {;
+                point=S3TrajectoryPoint(@segment[:tStart],@segment[:stateStart],@axes);
+                @children~=@children.Push(S3Annotation(point,"Observed event candidate",{= id=@semantic,color="#be123c",metadata=@metadata }));
+            };ignored;
+        },_);ignored;
+    },_);
+    uncertainty.Len()>0 ?: {;
+        point=S3TrajectoryPoint(@solution[:problem][:initialTime],@solution[:problem][:initialState].Map((range)->range.Low()),@axes);
+        @children~=@children.Push(S3Annotation(point,@"Unresolved or omitted trajectory regions: @{@uncertainty.Len()}",{= id=@"@{@id}.unresolved",color="#b91c1c",metadata={= uncertainty=@uncertainty } }));
+    } ?_ _;
+    S3Scene(children,options.Merge({= metadata={= schema="rix.scene3d.trajectory@1",source=solution,axes=axes,records=records,uncertainty=uncertainty,
+        unresolvedCount=uncertainty.Len(),omitted=omitted,events=events,work={= maxSegments=maximum,retained=.Min(maximum,solution[:segments].Len()) },displayAddsCertification=_ } }));
+};
+S3EventTrajectory(result,options ?= {= })->{;
+    result[:schema]=="rix.ode.event-result@1" ?_> .Error("Scene3D EventTrajectory requires an ODE event result");S3Trajectory(result[:solution],options,[result]);
+};
+S3UnitQuaternion(value)->{;
+    components=value ? :Array ?: value ?_ value[:components];
+    components.Len()==4 ?_> .Error("Scene3D unit quaternion requires four scalar components");
+    exact=components.Map((entry)->S3Exact(entry,"Scene3D quaternion component"));
+    .ValidatedClaimEqual(exact,exact);
+    norm=exact.Reduce((sum,entry)->sum+entry^2,0);norm==1 ?_> .Error("Scene3D rotation quaternion must have exact unit norm");
+    .ImmutableValue({= schema="rix.scene3d.unit-quaternion@1",components=exact,normSquared=norm,certified=1,evidence=:exactSumOfFourSquares });
+};
+S3QuaternionProduct(a,b)->[
+    a[1]*b[1]-a[2]*b[2]-a[3]*b[3]-a[4]*b[4],a[1]*b[2]+a[2]*b[1]+a[3]*b[4]-a[4]*b[3],
+    a[1]*b[3]-a[2]*b[4]+a[3]*b[1]+a[4]*b[2],a[1]*b[4]+a[2]*b[3]-a[3]*b[2]+a[4]*b[1]
+];
+S3QuaternionBlend(first,last,parameter)->{;
+    a=S3UnitQuaternion(first)[:components];b=S3UnitQuaternion(last)[:components];t=S3Exact(parameter,"Scene3D quaternion parameter");
+    t>=0&&t<=1 ?_> .Error("Scene3D quaternion parameter must be in zero through one");
+    relative=S3QuaternionProduct([a[1],-a[2],-a[3],-a[4]],b);
+    relative[1]!=-1 ?_> .ImmutableValue({= schema="rix.scene3d.quaternion-interpolation@1",status=:unsupported,reason=:antipodalCayleyPole,first=a,last=b,parameter=t,certified=_ });
+    vector=relative.Slice(2).Map((entry)->entry/(1+relative[1]));scaled=vector.Map((entry)->t*entry);square=scaled.Reduce((sum,entry)->sum+entry^2,0);
+    cayley=[(1-square)/(1+square)].Concat(scaled.Map((entry)->2*entry/(1+square)));
+    result=S3UnitQuaternion(S3QuaternionProduct(a,cayley));
+    .ImmutableValue({= schema="rix.scene3d.quaternion-interpolation@1",status=:exact,method=:rationalCayley,constantAngularSpeed=_,first=a,last=b,parameter=t,
+        quaternion=result,components=result[:components],certified=1,evidence={= relative=relative,cayleyVector=vector,denominator=1+square,normSquared=result[:normSquared] } });
+};
+S3QuaternionTransform(children,quaternion,options ?= {= })->{;
+    unit=S3UnitQuaternion(quaternion);q=unit[:components];w=q[1];x=q[2];y=q[3];z=q[4];
+    matrix=[1-2*(y^2+z^2),2*(x*y-z*w),2*(x*z+y*w),0,2*(x*y+z*w),1-2*(x^2+z^2),2*(y*z-x*w),0,2*(x*z-y*w),2*(y*z+x*w),1-2*(x^2+y^2),0,0,0,0,1];
+    S3Option(options,"scale")==_&&S3Option(options,"matrix")==_ ?_> .Error("QuaternionTransform does not accept a second matrix or scale");
+    S3Transform(children,options.Merge({= matrix=matrix,metadata={= schema="rix.scene3d.quaternion-transform@1",unitQuaternion=unit,certified=1,meaning=:exactRigidTransform } }));
+};
+
 scene3dNamespace={= };
 scene3dNamespace._proto={=
+    Trajectory=(self,solution,options ?= {= })->S3Trajectory(solution,options),
+    EventTrajectory=(self,result,options ?= {= })->S3EventTrajectory(result,options),
+    RegionView=(self,region,options ?= {= })->S3RegionView(region,options),
+    ImplicitSurface=(self,expression,box,options ?= {= })->S3ImplicitSurface(expression,box,options),
+    Volume=(self,expression,box,options ?= {= })->S3Volume(expression,box,options),
+    VolumeView=(self,volume,options ?= {= })->S3VolumeView(volume,options),
+    Slice=(self,volume,axis,coordinate,options ?= {= })->S3VolumeSlice(volume,axis,coordinate,options),
+    CellBox=(self,bounds,options ?= {= })->S3BoxMesh(bounds,options),
+    UnitQuaternion=(self,value)->S3UnitQuaternion(value),
+    QuaternionBlend=(self,first,last,parameter)->S3QuaternionBlend(first,last,parameter),
+    QuaternionTransform=(self,children,quaternion,options ?= {= })->S3QuaternionTransform(children,quaternion,options),
+    LinkedViews=(self,views,groups,options ?= {= })->.LinkedViews(views.Map((value)->S3IsScene(value) ?: S3Snapshot(value,options) ?_ value),groups,options),
     Scene=(self,children,options ?= {= })->S3Scene(children,options),
     Group=(self,children,options ?= {= })->S3Group(children,options),
     Transform=(self,children,options ?= {= })->S3Transform(children,options),
@@ -32450,17 +35844,17 @@ scene3dNamespace._proto={=
 };
 .Host.RegisterValue("scene3d",scene3dNamespace,"Pure-RiX exact retained 3D scenes with explicit realization and projection",["Scene3D","Graphics","Exact"]);
 `, sourcePath: "bundled:scene3d", kind: "rix" });
-  catalog.addMetadata({ id: "solve", description: "Domain-dispatched exact/certified solution objects for linear, optimization, polynomial, and scalar numerical problems.", kind: "rix", mount: "solve", exports: ["Classify", "Linear", "System", "Polynomial", "Numerical", "Substitute", "Residuals", "Check"], groups: ["Solve", "Symbolic", "Exact"], permissions: [], requires: ["rix.linear-algebra@2", "rix.optimization@2", "rix.polynomial.algorithms@1", "rix.algebraic-real@1", "rix.numerics@2"], provides: ["rix.system-solver@2", "rix.system-solver@1", "rix.solution@1"], schemas: ["rix.solve.system-result@1", "rix.solve.solution@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:solve" }, { source: `/**
+  catalog.addMetadata({ id: "solve", description: "Domain-dispatched exact/certified solution objects for linear, optimization, polynomial, and scalar numerical problems.", kind: "rix", mount: "solve", exports: ["OptimizeBox", "Classify", "Linear", "System", "Polynomial", "Numerical", "RootBoxes", "FromBoxes", "BoxFeasibility", "Substitute", "Residuals", "Check"], groups: ["Solve", "Symbolic", "Exact"], permissions: [], requires: ["rix.linear-algebra@2", "rix.optimization@2", "rix.polynomial.algorithms@1", "rix.algebraic-real@1", "rix.numerics@2"], provides: ["rix.solve.box-feasibility@1", "rix.system-solver@2", "rix.system-solver@1", "rix.solution@1"], schemas: ["rix.solve.system-result@1", "rix.solve.solution@1", "rix.solve.box-feasibility@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:solve" }, { source: `/**
 id: solve
 description: Domain-dispatched exact/certified solution objects for linear, optimization, polynomial, and scalar numerical problems.
 kind: rix
 mount: solve
-exports: [Classify, Linear, System, Polynomial, Numerical, Substitute, Residuals, Check]
+exports: [OptimizeBox, Classify, Linear, System, Polynomial, Numerical, RootBoxes, FromBoxes, BoxFeasibility, Substitute, Residuals, Check]
 groups: [Solve, Symbolic, Exact]
 permissions: []
 requires: [rix.linear-algebra@2, rix.optimization@2, rix.polynomial.algorithms@1, rix.algebraic-real@1, rix.numerics@2]
-provides: [rix.system-solver@2, rix.system-solver@1, rix.solution@1]
-schemas: [rix.solve.system-result@1, rix.solve.solution@1]
+provides: [rix.solve.box-feasibility@1, rix.system-solver@2, rix.system-solver@1, rix.solution@1]
+schemas: [rix.solve.system-result@1, rix.solve.solution@1, rix.solve.box-feasibility@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -32488,12 +35882,12 @@ SolveVectorArray(value)->{;
     {@ index=1; index<=@length; {; @result ~= @result.Push(@value[index]); }; index+=1 };
     result;
 };
-SolveMatrixTensor(rows)->{;
+SolveMatrixValue(rows)->{;
     flat:=[];
     {@ row=1; row<=@rows.Len(); {;
         {@ column=1; column<=@rows[@row].Len(); {; @flat ~= @flat.Push(@rows[@row][column]); }; column+=1 };
     }; row+=1 };
-    (flat ~!: :Shaped).Reshape([rows.Len(),rows[1].Len()]);
+    (flat ~!: :Shaped).Reshape([rows.Len(),rows[1].Len()]) ~!: :Matrix;
 };
 SolveIndexOf(values,requested)->{;
     found:=_;
@@ -32581,7 +35975,13 @@ SolveResiduals(value,candidate ?= _) -> {;
 };
 
 SolveCheck(value,candidate ?= _) -> {;
+    value[:schema]!="rix.optimize.box-result@1" ?_> {;
+        @candidate==_ ?_> .Error("Box optimization Check replays bounds; it does not certify a supplied point");
+        .optimize.CheckNonlinear(@value);
+    };
     kind=value[:classification];
+    kind!=:optimization ?_> SolveCheckOptimization(value,candidate);
+    kind!=:numericalBoxes ?_> SolveCheckRootBoxes(value,candidate);
     kind==:optimization
       ?: value[:program].Evaluate(SolveCandidateVector(value,candidate))[:feasible]
       ?_ kind==:numerical
@@ -32768,16 +36168,43 @@ SolveNamedOptionVector(options,key,outputs,fallback) -> {;
     };
 };
 
+SolveCheckOptimization(value,candidate) -> {;
+    result=value[:optimizationResult];schema=result[:schema];
+    (candidate!=_ || (schema!="rix.optimize.mixed-integer-result@1" && schema!="rix.optimize.quadratic-result@1")) ?_> {
+        @schema=="rix.optimize.mixed-integer-result@1" ?: .optimize.CheckMixedInteger(@result) ?_ .optimize.CheckQuadratic(@result)
+    };
+    vector=SolveCandidateVector(value,candidate);
+    value[:program].Evaluate(vector)[:feasible] ?_> _;
+    schema!="rix.optimize.mixed-integer-result@1" ?_> result[:integerAxes].All(axis->vector[axis]==(vector[axis] ~!: :Rational).Floor());
+    1;
+};
+
 SolveOptimizationResult(spec,roleInfo,outputs,equations,relations,matrix,bounds,options) -> {;
     objective=SolveNamedOptionVector(options,"objective",outputs,0).Map((value)->SolveExact(value,"objective coefficient"));
     lower=SolveNamedOptionVector(options,"lowerbounds",outputs,0);
     upper=SolveNamedOptionVector(options,"upperbounds",outputs,_);
-    program=.optimize.LinearProgram(objective,SolveMatrixTensor(matrix),bounds,{=
+    program=.optimize.LinearProgram(objective,SolveMatrixValue(matrix),bounds,{=
         relations=relations,lowerBounds=lower,upperBounds=upper,
-        sense=SolveOption(options,"sense",:max),name=SolveOption(options,"name",_)
+        sense=SolveOption(options,"sense",SolveOption(options,"hessian",_)==_ ?: :max ?_ :min),name=SolveOption(options,"name",_)
     });
-    optimized=program.Solve(SolveOption(options,"work",{= }));
-    kind=optimized[:status]=="infeasible" ?: :empty ?_ optimized[:status]=="unbounded" ?: :unbounded ?_ :finite;
+    integers=SolveOption(options,"integer",_);hessian=SolveOption(options,"hessian",_);work=SolveOption(options,"work",{= });
+    (integers==_ || hessian==_) ?_> .Error("Combined integer/quadratic optimization is unsupported");
+    optimized={?
+      integers!=_ ? {;
+        @integers ? :Array ?_> .Error("integer must be an Array of output names");
+        axes=@integers.Map(name->{;
+            index=SolveIndexOf(@outputs,name);index!=_ ?_> .Error("Integer variable must name an output");index;
+        });
+        .optimize.MixedInteger(@program,axes,@work);
+      };
+      hessian!=_ ? {;
+        SolveOption(@options,"sense",:min)==:min ?_> .Error("Convex quadratic dispatch requires sense=:min");
+        q=.optimize.Quadratic(@hessian,@objective,@program[:A],@bounds,{= relations=@relations,lowerBounds=@lower,upperBounds=@upper,constant=SolveOption(@options,"constant",0) });
+        .optimize.SolveQuadratic(q,@work);
+      };
+      program.Solve(work)
+    };
+    kind=optimized[:status]=="infeasible" ?: :empty ?_ optimized[:status]=="unbounded" ?: :unbounded ?_ optimized[:status]=="optimal" ?: :finite ?_ :unknown;
     named=optimized[:solution]==_ ?: _ ?_ SolveNamedValues(outputs,optimized[:solution]);
     SolveSolution(kind,optimized[:status],{=
         classification=:optimization,spec=spec,roles=roleInfo[:roles],unknowns=outputs,
@@ -32802,7 +36229,7 @@ SolveSystemCore(spec,options ?= {= })->{;
     equations.Len()>0 ?: _ ?_ .Error("solve.System found no equations");
     matrix=equations.Map((equation)->equation[:coefficients]);
     bounds=equations.Map((equation)->-equation[:constant]);
-    optimize=relations.Any((relation)->relation!=:eq) || SolveOption(options,"objective",_)!=_;
+    optimize=relations.Any((relation)->relation!=:eq) || SolveOption(options,"objective",_)!=_ || SolveOption(options,"integer",_)!=_ || SolveOption(options,"hessian",_)!=_;
     optimize
       ?: SolveOptimizationResult(spec,roleInfo,outputs,equations,relations,matrix,bounds,options)
       ?_ {;
@@ -32870,13 +36297,52 @@ SolveNumerical(function,intervalValue,options ?= {= })->{;
       };
 };
 
+SolveFromBoxes(boxes,options ?= {= }) ?!- [
+    options.Has("objective")==_ ?_> .Error("Root boxes do not solve optimization problems"),
+    boxes[:schema]=="rix.numerics.box-subdivision@1" ?_> .Error("solve.FromBoxes requires a numerical box subdivision"),
+    .numerics.CheckBoxSubdivision(boxes)[:accepted] ?_> .Error("solve.FromBoxes rejected unchecked box evidence")
+] -> {;
+    branches=boxes[:unique].Map((entry)->entry[:result][:box]);
+    unresolved=boxes[:unresolved];
+    existence=branches.Len()>0 ?: :atLeastOne ?_ unresolved.Len()==0 ?: :none ?_ :unproved;
+    result=SolveSolution(existence==:none ?: :empty ?_ :branch,boxes[:status],{=
+        classification=:numericalBoxes,purpose=:rootFinding,exact=_,certified=boxes[:certified],
+        rootExistence=existence,solution=branches,branches=branches,unknowns=boxes[:variables],
+        excluded=boxes[:excluded],unresolved=unresolved,boxes=boxes,assumptions=[],
+        distinctRootCount=_,provenance={= plugin=:solve,dispatch=:validatedNumericalBoxes }
+    });
+    .ValidatedClaimEqual(result,result) ?_> .Error("solve root summary exceeds its retained evidence budget");
+    result;
+};
+
+SolveCheckRootBoxes(value,candidate ?= _) ?!- [
+    candidate==_ ?_> .Error("Numerical root box Check replays enclosures and does not certify a supplied point"),
+    .numerics.CheckBoxSubdivision(value[:boxes])[:certified] ?_> _
+] -> .ValidatedClaimEqual(value,SolveFromBoxes(value[:boxes]));
+
+SolveRootBoxes(expressions,jacobian,box,options ?= {= }) ?!- [
+    options.Has("objective")==_ ?_> .Error("Root boxes do not solve optimization problems")
+] -> SolveFromBoxes(.numerics.SubdivideBoxes(expressions,jacobian,box,options),options);
+
+SolveBoxFeasibility(expressions,jacobian,box,options ?= {= }) -> {;
+    roots=SolveRootBoxes(expressions,jacobian,box,options);
+    status=roots[:rootExistence]==:atLeastOne ?: :feasible ?_ roots[:rootExistence]==:none ?: :infeasible ?_ :unknown;
+    {= schema="rix.solve.box-feasibility@1",purpose=:equalityFeasibility,status=status,
+        certified=status!=:unknown,witnessBoxes=roots[:branches],roots=roots,
+        unresolved=roots[:unresolved],optimization=_ };
+};
+
 solveNamespace={= };
 solveNamespace._proto={=
+    OptimizeBox=(self,objective,constraints,box,options ?= {= })->.optimize.Nonlinear(objective,constraints,box,options),
     Classify=(self,spec)->SolveClassify(spec),
     Linear=(self,matrix,bounds)->SolveLinear(matrix,bounds),
     System=(self,spec,options ?= {= })->SolveSystem(spec,options),
     Polynomial=(self,polynomial,interval,options ?= {= })->SolvePolynomial(polynomial,interval,options),
     Numerical=(self,function,interval,options ?= {= })->SolveNumerical(function,interval,options),
+    RootBoxes=(self,expressions,jacobian,box,options ?= {= })->SolveRootBoxes(expressions,jacobian,box,options),
+    FromBoxes=(self,boxes,options ?= {= })->SolveFromBoxes(boxes,options),
+    BoxFeasibility=(self,expressions,jacobian,box,options ?= {= })->SolveBoxFeasibility(expressions,jacobian,box,options),
     Substitute=(self,solution,bindings ?= {= })->SolveSubstitute(solution,bindings),
     Residuals=(self,solution,candidate ?= _)->SolveResiduals(solution,candidate),
     Check=(self,solution,candidate ?= _)->SolveCheck(solution,candidate)
@@ -34938,19 +38404,19 @@ defaultEnabled: false
     )
 }
 `, sourcePath: "bundled:stern-brocot", kind: "rix" });
-  catalog.addMetadata({ id: "svg", description: "Portable SVG renderer with outward-safe exact and certified coordinate lowering.", kind: "host", mount: "svg", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.renderer.svg@1", "rix.renderer.svg@2", "rix.svg.coordinate-lowering@1", "rix.viewport@1", "rix.selection@1"], schemas: ["rix.svg.coordinate-lowering@1", "rix.viewport@1", "rix.selection@1"], targets: ["svg", "image/svg+xml"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:svg" }, { sourcePath: "bundled:svg", kind: "host" });
+  catalog.addMetadata({ id: "svg", description: "Portable SVG renderer with outward-safe exact and certified coordinate lowering.", kind: "host", mount: "svg", exports: ["Render"], groups: ["Renderers"], permissions: [], provides: ["rix.graphics.source-evidence@1", "rix.renderer.svg@1", "rix.renderer.svg@2", "rix.svg.coordinate-lowering@1", "rix.svg.optimization@1", "rix.viewport@1", "rix.selection@1"], schemas: ["rix.graphics.source-evidence@1", "rix.svg.coordinate-lowering@1", "rix.svg.optimization@1", "rix.viewport@1", "rix.selection@1"], targets: ["svg", "image/svg+xml"], snapshot: true, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], requires: [], optional: [], operatorFiles: [], ignore: false, sourcePath: "bundled:svg" }, { sourcePath: "bundled:svg", kind: "host" });
   catalog.registerInstaller("svg", install7);
-  catalog.addMetadata({ id: "symbolic", description: "Meta-plugin joining representation-sensitive FractionFunction work with portable abstract Calculus expressions.", kind: "rix", mount: "symbolic", exports: ["Fraction", "FractionFunction", "CalculusExpression", "Evaluate", "EvaluateResult", "SimplifyResult", "CheckSimplification", "RewriteResult", "CheckRewrite", "Differentiate", "DifferentiateResult", "DifferentiateN", "DifferentiateNResult", "Partial", "PartialResult", "Gradient", "GradientResult", "Jacobian", "JacobianResult", "Hessian", "HessianResult", "SelectedPrimitive", "AntiderivativeFamily", "DefiniteIntegral", "Obligations", "Transformations", "FindTransformations", "Transformation", "Services"], groups: ["Algebra", "Calculus", "Analysis", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction-function@1", "rix.calculus@1"], provides: ["rix.symbolic.formal@1", "rix.symbolic.transformations@1"], schemas: ["rix.symbolic.transformation-descriptor@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:symbolic" }, { source: `/**
+  catalog.addMetadata({ id: "symbolic", description: "Meta-plugin joining representation-sensitive FractionFunction work with portable abstract Calculus expressions.", kind: "rix", mount: "symbolic", exports: ["Fraction", "FractionDerivation", "FractionFunction", "CalculusExpression", "Evaluate", "EvaluateResult", "SimplifyResult", "CheckSimplification", "RewriteResult", "CheckRewrite", "Differentiate", "DifferentiateResult", "DifferentiateN", "DifferentiateNResult", "Partial", "PartialResult", "Gradient", "GradientResult", "Jacobian", "JacobianResult", "Hessian", "HessianResult", "SelectedPrimitive", "AntiderivativeFamily", "DefiniteIntegral", "Obligations", "Transformations", "FindTransformations", "Transformation", "Services"], groups: ["Algebra", "Calculus", "Analysis", "Exact", "Symbolic"], permissions: [], requires: ["rix.fraction-function@1", "rix.calculus@1"], provides: ["rix.symbolic.formal@1", "rix.symbolic.transformations@1"], schemas: ["rix.symbolic.transformation-descriptor@1", "rix.symbolic.fraction-derivation@1"], snapshot: false, deterministic: true, defaultEnabled: false, operatorDefinitions: [], aliases: [], optional: [], targets: [], operatorFiles: [], ignore: false, sourcePath: "bundled:symbolic" }, { source: `/**
 id: symbolic
 description: Meta-plugin joining representation-sensitive FractionFunction work with portable abstract Calculus expressions.
 kind: rix
 mount: symbolic
-exports: [Fraction, FractionFunction, CalculusExpression, Evaluate, EvaluateResult, SimplifyResult, CheckSimplification, RewriteResult, CheckRewrite, Differentiate, DifferentiateResult, DifferentiateN, DifferentiateNResult, Partial, PartialResult, Gradient, GradientResult, Jacobian, JacobianResult, Hessian, HessianResult, SelectedPrimitive, AntiderivativeFamily, DefiniteIntegral, Obligations, Transformations, FindTransformations, Transformation, Services]
+exports: [Fraction, FractionDerivation, FractionFunction, CalculusExpression, Evaluate, EvaluateResult, SimplifyResult, CheckSimplification, RewriteResult, CheckRewrite, Differentiate, DifferentiateResult, DifferentiateN, DifferentiateNResult, Partial, PartialResult, Gradient, GradientResult, Jacobian, JacobianResult, Hessian, HessianResult, SelectedPrimitive, AntiderivativeFamily, DefiniteIntegral, Obligations, Transformations, FindTransformations, Transformation, Services]
 groups: [Algebra, Calculus, Analysis, Exact, Symbolic]
 permissions: []
 requires: [rix.fraction-function@1, rix.calculus@1]
 provides: [rix.symbolic.formal@1, rix.symbolic.transformations@1]
-schemas: [rix.symbolic.transformation-descriptor@1]
+schemas: [rix.symbolic.transformation-descriptor@1, rix.symbolic.fraction-derivation@1]
 snapshot: false
 deterministic: true
 defaultEnabled: false
@@ -35125,9 +38591,19 @@ SymbolicTransformation(id) -> {;
     matches.Len()==1 ?: matches[1] ?_ .Error(@"Unknown symbolic transformation @{id}");
 };
 
+SymbolicFractionDerivation(evidence) -> {;
+    .fraction.CheckDerivation(evidence)[:accepted] ?_> .Error("Symbolic fraction derivation requires checked evidence");
+    value=evidence[:value];
+    value!=_ && value.Denominator()!=0 ?_> .Error("Symbolic fraction derivation requires a finite retained result");
+    {= schema="rix.symbolic.fraction-derivation@1",representation=value,
+        expression=.calculus.Constant(value.Rational()),evidence=evidence,
+        relation=:exactRetainedResult,sourceEqualityClaim=_ };
+};
+
 symbolicNamespace = {= };
 symbolicNamespace._proto = {=
     Fraction = (self, first, second ?= _) -> second == _ ?: .fraction(first) ?_ .fraction(first,second),
+    FractionDerivation = (self,evidence) -> SymbolicFractionDerivation(evidence),
     FractionFunction = (self, value, variable ?= _) -> variable == _ ?: .fracfun(value) ?_ .fracfun(value,variable),
     CalculusExpression = (self, value) -> SymbolicCalculusExpression(value),
     Evaluate = (self, value, bindings ?= {= }, options ?= {= }) ->
@@ -35508,7 +38984,7 @@ var helpGroups = [
     description: "Explore exact intervals and create portable interactive graphics.",
     items: [
       ["1/3:2/3", "Create an exact closed interval; endpoint orientation is retained."],
-      ["Explore interval", "Open the exact number line, edit endpoints, inspect arithmetic provenance, and export SVG or HTML."],
+      ["Explore exact value", "Open exact rational or interval number lines, inspect bounded arithmetic and linked fractions, edit endpoints, and export SVG, HTML or text."],
       ["Arrow keys", "In the interval explorer, move a focused endpoint or the whole interval by the exact selected step."],
       [".Graphics", "Build portable figures that RiX Web can render and make interactive."]
     ]
@@ -35654,7 +39130,7 @@ function createWebSessionState(registeredControls, profileRequest, autoLoadPlugi
   }
   return state;
 }
-function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, pluginProfile = {} } = {}) {
+function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, pluginProfile = {}, assetStore, authorizeExternal = null } = {}) {
   const registeredControls = new Map;
   let profileRequest = pluginProfile;
   let state = createWebSessionState(registeredControls, profileRequest, autoLoadPlugins);
@@ -35694,7 +39170,21 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
     }
     return { ...numberConfig };
   };
+  const readExactLeaf = (source) => {
+    if (typeof source !== "string" || source.length > 8192)
+      throw new Error("Exact inspection source exceeds 8192 characters");
+    const nodes = parse(source);
+    const node = nodes.length === 1 ? nodes[0] : null;
+    if (node?.type === "Number")
+      return parseAndEvaluate(source, { ...state, file: "<exact-inspection-literal>" });
+    if (node?.type !== "UserIdentifier" && node?.type !== "ReactiveRef")
+      throw new Error("Exact inspection reads only numeric literals and current variable values");
+    const value = state.context.get(node.name);
+    return isReactiveNode(value) ? value.peek() : value;
+  };
   return {
+    ...createOutputBundleHost({ assetStore, authorizeExternal, format: configuredFormat }),
+    readExactLeaf,
     run(source) {
       const topic = inlineHelpRequest(source);
       if (topic !== null)
@@ -35713,6 +39203,7 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
           value,
           text: presentationFormat(value),
           sourceText: formatValueSource(value),
+          exactTrace: exactExplorationInterval(value) ? traceExactArithmetic(source, readExactLeaf) : null,
           html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
           observe: observed.observe ? (listener) => observed.observe((nextValue, event) => listener(makeResponse(nextValue), event)) : null,
           dispose: observed.dispose
@@ -35745,6 +39236,7 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
           value,
           text: presentationFormat(value),
           sourceText: formatValueSource(value),
+          exactTrace: exactExplorationInterval(value) ? traceExactArithmetic(source, readExactLeaf) : null,
           html: isOutputValue(value) ? renderOutputHtml(value, format) : null,
           observe: observed.observe ? (listener) => observed.observe((nextValue, event) => listener(makeResponse(nextValue), event)) : null,
           dispose: observed.dispose
@@ -35871,5 +39363,5 @@ function createRixRepl({ autoSeparateLines = true, autoLoadPlugins = true, plugi
 
 export { pluginProfileFromUrl, stripMarkedPluginProfile, findHelp, createRixRepl };
 
-//# debugId=B7CAFBDAD64D1CB664756E2164756E21
-//# sourceMappingURL=chunk-ekx60vj6.js.map
+//# debugId=3AA70824FC0DE7C464756E2164756E21
+//# sourceMappingURL=chunk-z8axd7qs.js.map

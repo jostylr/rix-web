@@ -1,16 +1,17 @@
 import {
   createRixRepl
-} from "./chunk-ekx60vj6.js";
+} from "./chunk-z8axd7qs.js";
 import {
   PluginCatalog,
   formatValue,
   lintRix,
   mountOutputWidgets,
   readPluginHeader
-} from "./chunk-e0xf4pd3.js";
+} from "./chunk-f4fq1e6m.js";
 import {
   mountTutorialNavigation
 } from "./chunk-g5p2fpmt.js";
+import"./chunk-9v01vpwy.js";
 
 // src/tutorial-object-help.js
 var objectHelp = {
@@ -402,5 +403,5 @@ function openObjectHelp(name, requestedFunction = null) {
   dialog.showModal();
 }
 
-//# debugId=E55EE6D322531DDB64756E2164756E21
+//# debugId=803D3364E45FD01364756E2164756E21
 //# sourceMappingURL=tutorial-runner.js.map

@@ -1,53 +1,29 @@
 import {
+  createSternBrocotRixBridge
+} from "./chunk-mdjjda8c.js";
+import {
   createRixRepl,
   findHelp,
   pluginProfileFromUrl,
   stripMarkedPluginProfile
-} from "./chunk-ekx60vj6.js";
+} from "./chunk-z8axd7qs.js";
 import {
   Integer,
   Rational,
   RationalInterval,
+  boundedExactExplorationInterval,
   createControlPanel,
+  createExactNumberLineGraphic,
   createGeometryAuthoringProgram,
+  enhanceGraphicViews,
   mountOutputWidgets,
-  parse,
-  renderOutputHtml
-} from "./chunk-e0xf4pd3.js";
+  renderGraphicSvg,
+  renderOutputHtml,
+  traceExactArithmetic
+} from "./chunk-f4fq1e6m.js";
+import"./chunk-9v01vpwy.js";
 
 // src/interval-explorer.js
-var SVG_NS = "http://www.w3.org/2000/svg";
-var COLORS = ["#2563eb", "#dc2626", "#7c3aed"];
-function unwrapGrouping(node) {
-  return node?.type === "Grouping" ? unwrapGrouping(node.expression) : node;
-}
-function astSource(node) {
-  if (!node)
-    return null;
-  switch (node.type) {
-    case "Number":
-      return node.value;
-    case "UserIdentifier":
-      return node.name;
-    case "SystemIdentifier":
-      return `.${node.name}`;
-    case "Grouping": {
-      const expression = astSource(node.expression);
-      return expression === null ? null : `(${expression})`;
-    }
-    case "UnaryOperation": {
-      const operand = astSource(node.operand);
-      return operand === null ? null : `${node.operator}${operand}`;
-    }
-    case "BinaryOperation": {
-      const left = astSource(node.left);
-      const right = astSource(node.right);
-      return left === null || right === null ? null : `(${left} ${node.operator} ${right})`;
-    }
-    default:
-      return null;
-  }
-}
 function rationalValue(value) {
   if (value instanceof Rational)
     return value;
@@ -62,34 +38,21 @@ function intervalValue(value) {
   return rational ? new RationalInterval(rational, rational) : null;
 }
 function isRationalIntervalValue(value) {
-  return value instanceof RationalInterval;
+  return value instanceof RationalInterval || value instanceof Rational || value instanceof Integer;
 }
-function analyzeIntervalExpression(source, evaluate) {
-  try {
-    const nodes = parse(source);
-    if (nodes.length !== 1)
-      return null;
-    const root = unwrapGrouping(nodes[0]);
-    if (root?.type !== "BinaryOperation" || !["+", "-", "*", "/"].includes(root.operator))
-      return null;
-    const leftSource = astSource(root.left);
-    const rightSource = astSource(root.right);
-    if (!leftSource || !rightSource)
-      return null;
-    const left = evaluate(leftSource);
-    const right = evaluate(rightSource);
-    const leftInterval = left?.type === "result" ? intervalValue(left.value) : null;
-    const rightInterval = right?.type === "result" ? intervalValue(right.value) : null;
-    if (!leftInterval || !rightInterval)
-      return null;
-    return {
-      operator: root.operator,
-      left: { source: leftSource, value: leftInterval },
-      right: { source: rightSource, value: rightInterval }
-    };
-  } catch {
+function analyzeIntervalExpression(source, inspect, capturedTrace = null) {
+  const trace = capturedTrace || traceExactArithmetic(source, inspect);
+  const result = trace.result;
+  if (!result || !["+", "-", "*", "/"].includes(result.operator) || result.dependencies.length !== 2)
     return null;
-  }
+  const [left, right] = result.dependencies.map((id) => trace.steps.find((step) => step.id === id));
+  if (!left?.value || !right?.value)
+    return null;
+  return {
+    operator: result.operator,
+    left: { source: left.source, value: intervalValue(left.value) },
+    right: { source: right.source, value: intervalValue(right.value) }
+  };
 }
 function applyOperation(operator, left, right) {
   if (operator === "+")
@@ -105,10 +68,6 @@ function applyOperation(operator, left, right) {
 function exactSource(value) {
   return `${value.start.toString()}:${value.end.toString()}`;
 }
-function approximate(value) {
-  const result = Number.parseFloat(value.toDecimal(20));
-  return Number.isFinite(result) ? result : null;
-}
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (character) => ({
     "&": "&amp;",
@@ -118,17 +77,12 @@ function escapeHtml(value) {
     '"': "&quot;"
   })[character]);
 }
-function svgElement(name, attributes = {}) {
-  const element = document.createElementNS(SVG_NS, name);
-  for (const [key, value] of Object.entries(attributes))
-    element.setAttribute(key, String(value));
-  return element;
-}
 
 class IntervalExplorer {
-  constructor({ dialog, evaluate, onUse }) {
+  constructor({ dialog, evaluate, inspect = evaluate, onUse }) {
     this.dialog = dialog;
     this.evaluate = evaluate;
+    this.inspect = inspect;
     this.onUse = onUse;
     this.sourceElement = dialog.querySelector("#interval-source");
     this.provenanceElement = dialog.querySelector("#interval-provenance");
@@ -142,6 +96,9 @@ class IntervalExplorer {
     this.selectedIndex = 0;
     this.items = [];
     this.drag = null;
+    this.graphicState = {};
+    this.trace = null;
+    this.linkBridge = null;
     this.selectionElement.addEventListener("change", () => {
       this.selectedIndex = Number(this.selectionElement.value);
       this.render();
@@ -158,6 +115,12 @@ class IntervalExplorer {
     this.stepElement.addEventListener("change", () => this.render());
     dialog.addEventListener("click", (event) => {
       const nudge = event.target.closest("[data-interval-nudge]");
+      const linked = event.target.closest("[data-exact-inspect]");
+      if (linked)
+        this.open(linked.dataset.exactInspect, new Rational(linked.dataset.exactInspect));
+      const use = event.target.closest("[data-exact-use]");
+      if (use)
+        this.onUse(use.dataset.exactUse);
       if (nudge) {
         const [target, direction] = nudge.dataset.intervalNudge.split(":");
         this.nudge(target, Number(direction));
@@ -168,12 +131,38 @@ class IntervalExplorer {
       this.drag = null;
     });
   }
-  open(source, value) {
+  open(source, value, capturedTrace = null) {
     const interval = intervalValue(value);
     if (!interval)
       return;
+    try {
+      boundedExactExplorationInterval(value);
+    } catch (error) {
+      this.limitError = error.message;
+      this.resultError = null;
+      this.source = source;
+      this.sourceElement.textContent = source;
+      this.items = [{ label: "Exact value outside graphic work budget", source, value: interval, derived: true }];
+      this.selectedIndex = 0;
+      this.operator = null;
+      this.trace = null;
+      this.links = null;
+      this.graphic = null;
+      this.provenanceElement.textContent = "The exact value remains available below. Graphic and arithmetic inspection stopped at the work budget.";
+      this.graphicElement.replaceChildren();
+      this.statusElement.textContent = error.message;
+      this.renderEditor();
+      this.renderTable();
+      if (!this.dialog.open)
+        this.dialog.showModal();
+      return;
+    }
+    this.resultError = null;
+    this.limitError = null;
     this.source = source;
-    const provenance = analyzeIntervalExpression(source, this.evaluate);
+    this.trace = capturedTrace || traceExactArithmetic(source, this.inspect);
+    this.graphicState = {};
+    const provenance = analyzeIntervalExpression(source, this.inspect, this.trace);
     if (provenance) {
       this.operator = provenance.operator;
       this.items = [
@@ -184,20 +173,21 @@ class IntervalExplorer {
       this.selectedIndex = 2;
     } else {
       this.operator = null;
-      this.items = [{ label: "Interval", source, value: interval, derived: false }];
+      this.items = [{ label: interval.start.equals(interval.end) ? "Rational point" : "Interval", source, value: interval, derived: false }];
       this.selectedIndex = 0;
     }
     this.statusElement.textContent = "";
     this.sourceElement.textContent = source;
     this.render();
-    this.dialog.showModal();
+    if (!this.dialog.open)
+      this.dialog.showModal();
   }
   close() {
     this.drag = null;
     this.dialog.close();
   }
   step() {
-    const denominator = Math.max(1, Number.parseInt(this.stepElement.value, 10) || 10);
+    const denominator = Math.min(1e6, Math.max(1, Number.parseInt(this.stepElement.value, 10) || 10));
     this.stepElement.value = String(denominator);
     return new Rational(1n, BigInt(denominator));
   }
@@ -208,15 +198,25 @@ class IntervalExplorer {
     if (!this.operator || this.items.length !== 3)
       return;
     try {
+      this.resultError = null;
+      this.items[2].label = `Result (${this.operator})`;
       this.items[2].value = applyOperation(this.operator, this.items[0].value, this.items[1].value);
       this.statusElement.textContent = "Result recalculated exactly from the edited operands.";
     } catch (error) {
-      this.statusElement.textContent = error.message || String(error);
+      this.resultError = error.message || String(error);
+      this.items[2].label = "Previous valid result (current result undefined)";
+      this.statusElement.textContent = this.resultError;
     }
   }
   setItemValue(index, value) {
     if (this.items[index]?.derived)
       return;
+    try {
+      boundedExactExplorationInterval(value);
+    } catch (error) {
+      this.statusElement.textContent = error.message;
+      return;
+    }
     this.items[index].value = value;
     this.recalculate();
     this.render();
@@ -234,16 +234,17 @@ class IntervalExplorer {
     const item = this.selected();
     if (!item || item.derived)
       return;
-    const start = this.evaluate(this.startElement.value.trim());
-    const end = this.evaluate(this.endElement.value.trim());
-    const startValue = start?.type === "result" ? rationalValue(start.value) : null;
-    const endValue = end?.type === "result" ? rationalValue(end.value) : null;
+    const start = traceExactArithmetic(this.startElement.value.trim(), this.inspect).result;
+    const end = traceExactArithmetic(this.endElement.value.trim(), this.inspect).result;
+    const startValue = rationalValue(start?.value);
+    const endValue = rationalValue(end?.value);
     if (!startValue || !endValue) {
-      this.statusElement.textContent = "Start and end must each evaluate to one exact integer or rational.";
+      this.statusElement.textContent = "Start and end must be bounded pure arithmetic expressions giving an exact integer or rational.";
       return;
     }
     this.setItemValue(this.selectedIndex, new RationalInterval(startValue, endValue));
-    this.statusElement.textContent = "Exact endpoints updated.";
+    if (!this.resultError)
+      this.statusElement.textContent = "Exact endpoints updated.";
   }
   pointerStart(event, index, target) {
     if (this.items[index]?.derived)
@@ -272,87 +273,63 @@ class IntervalExplorer {
     const end = this.drag.target === "start" ? original.end : original.end.add(delta);
     this.setItemValue(this.drag.index, new RationalInterval(start, end));
   }
-  range() {
-    const values = this.items.flatMap(({ value }) => [value.low, value.high]);
-    const approximateValues = values.map(approximate).filter((value) => value !== null);
-    if (approximateValues.length !== values.length)
-      return { min: -1, max: 1, reliable: false };
-    let min = Math.min(...approximateValues);
-    let max = Math.max(...approximateValues);
-    if (min === max) {
-      min -= 1;
-      max += 1;
-    }
-    const padding = Math.max((max - min) * 0.12, 0.25);
-    return { min: min - padding, max: max + padding, reliable: true };
-  }
   renderGraphic() {
-    const width = 760;
-    const height = this.items.length === 3 ? 270 : 210;
-    const left = 54;
-    const right = width - 38;
-    const range = this.range();
-    const x = (value) => {
-      const number = approximate(value);
-      if (number === null)
-        return (left + right) / 2;
-      return left + (number - range.min) / (range.max - range.min) * (right - left);
-    };
-    const svg = svgElement("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-labelledby": "interval-svg-title interval-svg-description" });
-    const title = svgElement("title", { id: "interval-svg-title" });
-    title.textContent = "Exact rational intervals on an approximate number line";
-    const description = svgElement("desc", { id: "interval-svg-description" });
-    description.textContent = this.items.map(({ label, value }) => `${label}: ${exactSource(value)}`).join("; ");
-    svg.append(title, description);
-    const axisY = this.items.length === 3 ? 132 : 102;
-    svg.appendChild(svgElement("line", { x1: left, y1: axisY, x2: right, y2: axisY, class: "interval-axis" }));
-    for (let index = 0;index <= 4; index += 1) {
-      const position = left + (right - left) * index / 4;
-      const value = range.min + (range.max - range.min) * index / 4;
-      svg.appendChild(svgElement("line", { x1: position, y1: axisY - 6, x2: position, y2: axisY + 6, class: "interval-tick" }));
-      const label = svgElement("text", { x: position, y: axisY + 24, class: "interval-tick-label", "text-anchor": "middle" });
-      label.textContent = Number.isFinite(value) ? value.toPrecision(4).replace(/\.0+$/, "") : "approx.";
-      svg.appendChild(label);
-    }
+    const activeId = this.dialog.ownerDocument.activeElement?.dataset?.rixSemanticId;
+    this.graphic = createExactNumberLineGraphic(this.items.map((item, index) => ({ ...item, id: `interval-${index}` })), { title: "Exact rational points and intervals" });
+    this.graphic.metadata.set("explorationText", this.explorationText());
+    this.graphicElement.innerHTML = renderOutputHtml(this.graphic, String);
+    this.svg = this.graphicElement.querySelector("svg");
     this.items.forEach((item, index) => {
-      const y = this.items.length === 3 ? [65, 112, 201][index] : 72;
-      const startX = x(item.value.start);
-      const endX = x(item.value.end);
-      const color = COLORS[index % COLORS.length];
-      const group = svgElement("g", { class: `interval-lane${index === this.selectedIndex ? " selected" : ""}` });
-      const laneLabel = svgElement("text", { x: left, y: y - 18, class: "interval-lane-label" });
-      laneLabel.textContent = `${item.label}  ${exactSource(item.value)}`;
-      const segment = svgElement("line", { x1: startX, y1: y, x2: endX, y2: y, stroke: color, class: "interval-segment", tabindex: item.derived ? -1 : 0, role: "button", "aria-label": `${item.label}; move both endpoints; ${exactSource(item.value)}` });
-      segment.addEventListener("pointerdown", (event) => this.pointerStart(event, index, "whole"));
-      segment.addEventListener("keydown", (event) => {
-        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-          event.preventDefault();
-          this.nudge("whole", event.key === "ArrowLeft" ? -1 : 1, index);
-        }
-      });
-      group.append(laneLabel, segment);
-      [["start", startX], ["end", endX]].forEach(([target, cx]) => {
-        const handle = svgElement("circle", { cx, cy: y, r: 8, fill: color, class: "interval-handle", tabindex: item.derived ? -1 : 0, role: "slider", "aria-label": `${item.label} ${target} endpoint`, "aria-valuetext": item.value[target].toString() });
-        handle.addEventListener("pointerdown", (event) => this.pointerStart(event, index, target));
-        handle.addEventListener("keydown", (event) => {
-          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      for (const target of ["start", "end", "whole"]) {
+        const id = target === "whole" ? `interval-${index}` : `interval-${index}:${target}`;
+        const element = [...this.svg.querySelectorAll("[data-rix-semantic-id]")].find((node) => node.dataset.rixSemanticId === id);
+        if (!element || item.derived)
+          continue;
+        element.dataset.rixDragTarget = `interval:${index}:${target}`;
+        element.setAttribute("tabindex", "0");
+        element.setAttribute("role", "button");
+        element.setAttribute("aria-label", `${item.label} ${target === "whole" ? "move both endpoints" : `${target} endpoint`}: ${target === "whole" ? String(item.value) : String(item.value[target])}. Left and Right adjust by the exact selected step.`);
+        element.addEventListener("pointerdown", (event) => this.pointerStart(event, index, target));
+        element.addEventListener("keydown", (event) => {
+          if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
             event.preventDefault();
+            event.stopPropagation();
             this.nudge(target, event.key === "ArrowLeft" ? -1 : 1, index);
           }
         });
-        group.appendChild(handle);
-      });
-      svg.appendChild(group);
+      }
     });
-    this.graphicElement.replaceChildren(svg);
-    this.svg = svg;
+    enhanceGraphicViews(this.graphicElement, { graphic: this.graphic, state: this.graphicState, format: String });
+    if (activeId)
+      [...this.svg.querySelectorAll("[data-rix-semantic-id]")].find((node) => node.dataset.rixSemanticId === activeId)?.focus({ preventScroll: true });
   }
   renderProvenance() {
     if (!this.operator) {
       this.provenanceElement.innerHTML = `<span class="provenance-node"><b>Exact source</b><code>${escapeHtml(this.source)}</code></span><span class="provenance-arrow">→</span><span class="provenance-node result"><b>Interval</b><code>${escapeHtml(exactSource(this.items[0].value))}</code></span>`;
+      this.renderExplorationDetails();
       return;
     }
-    this.provenanceElement.innerHTML = `<span class="provenance-node"><b>Left operand</b><code>${escapeHtml(exactSource(this.items[0].value))}</code></span><span class="provenance-operator" aria-label="operator ${escapeHtml(this.operator)}">${escapeHtml(this.operator)}</span><span class="provenance-node"><b>Right operand</b><code>${escapeHtml(exactSource(this.items[1].value))}</code></span><span class="provenance-arrow">→</span><span class="provenance-node result"><b>Exact result</b><code>${escapeHtml(exactSource(this.items[2].value))}</code></span>`;
+    this.provenanceElement.innerHTML = `<span class="provenance-node"><b>Left operand</b><code>${escapeHtml(exactSource(this.items[0].value))}</code></span><span class="provenance-operator" aria-label="operator ${escapeHtml(this.operator)}">${escapeHtml(this.operator)}</span><span class="provenance-node"><b>Right operand</b><code>${escapeHtml(exactSource(this.items[1].value))}</code></span><span class="provenance-arrow">→</span><span class="provenance-node result"><b>${this.resultError ? "Previous valid result" : "Exact result"}</b><code>${escapeHtml(exactSource(this.items[2].value))}</code></span>`;
+    this.renderExplorationDetails();
+  }
+  renderExplorationDetails() {
+    this.links = null;
+    if (this.resultError)
+      this.provenanceElement.insertAdjacentHTML("beforeend", `<p role="alert">Current result is undefined: ${escapeHtml(this.resultError)}. The last valid result is shown for reference.</p>`);
+    const trace = this.trace;
+    const traceHtml = trace ? `<details class="interval-trace"><summary>Bounded arithmetic provenance (${trace.steps.length} steps)</summary>${trace.diagnostics.map((message) => `<p>${escapeHtml(message)}</p>`).join("")}<p>Opening this view inspects pure arithmetic only; calls and assignments are not replayed. This trace describes the original expression; edited endpoints are shown separately.</p><table><thead><tr><th>Step</th><th>Source</th><th>Exact result</th><th>Evidence / width</th></tr></thead><tbody>${trace.steps.map((step) => `<tr><th>${escapeHtml(step.id)}</th><td><code>${escapeHtml(step.source)}</code></td><td>${step.value === null ? "unresolved" : `<button type="button" data-exact-use="${escapeHtml(String(step.value))}">${escapeHtml(String(step.value))}</button>`}</td><td>${escapeHtml(step.status)}${step.width === null ? "" : `; width ${escapeHtml(String(step.width))}`}${step.reason ? `; ${escapeHtml(step.reason)}` : ""}</td></tr>`).join("")}</tbody></table></details>` : "";
+    this.provenanceElement.insertAdjacentHTML("beforeend", traceHtml);
+    const interval = this.items.at(-1)?.value;
+    if (this.resultError || !interval?.start.equals(interval.end))
+      return;
+    try {
+      this.linkBridge ||= createSternBrocotRixBridge();
+      const links = this.links = this.linkBridge.describeBounded(interval.start);
+      const inspect = (value) => value.denominator === 0n ? escapeHtml(String(value)) : `<button type="button" data-exact-inspect="${escapeHtml(String(value))}">${escapeHtml(String(value))}</button>`;
+      this.provenanceElement.insertAdjacentHTML("beforeend", `<details class="interval-number-links"><summary>Mediants, Farey parents and continued fractions</summary><p>Farey parents: ${links.parents.map(inspect).join(" and ")}; mediant: ${inspect(links.mediant)}.</p><p>Stern–Brocot path: ${escapeHtml(links.path.join(" ") || (links.pathDiagnostic ? "unavailable" : "root"))}${links.pathDiagnostic ? `; ${escapeHtml(links.pathDiagnostic)}` : ""}</p><p>Continued fraction: ${escapeHtml(links.continuedFraction.map(String).join(", "))}${links.truncated ? "; term limit reached" : ""}.</p><table><caption>Exact convergent errors (selected value minus convergent)</caption><thead><tr><th>Convergent</th><th>Exact error</th></tr></thead><tbody>${links.convergents.map((entry) => `<tr><td>${inspect(entry.value)}</td><td><button type="button" data-exact-use="${escapeHtml(String(entry.error))}">${escapeHtml(String(entry.error))}</button></td></tr>`).join("")}</tbody></table><a href="./stern-brocot-rix/" target="_blank" rel="noopener">Open the existing Stern–Brocot explorer</a></details>`);
+    } catch (error) {
+      this.provenanceElement.insertAdjacentHTML("beforeend", `<p>${escapeHtml(error.message)}</p>`);
+    }
   }
   renderEditor() {
     this.selectionElement.replaceChildren(...this.items.map((item2, index) => Object.assign(document.createElement("option"), { value: String(index), textContent: item2.label })));
@@ -375,18 +352,46 @@ class IntervalExplorer {
     this.renderEditor();
     this.renderTable();
   }
+  explorationText() {
+    return [
+      `Original source: ${this.source}`,
+      ...this.items.map((item) => `${item.label}: ${item.value}; ${item.value.isAscending ? "ascending" : "reversed"} endpoint order`),
+      ...this.limitError ? [`Inspection stopped: ${this.limitError}. The original exact value is unchanged.`] : [],
+      ...this.resultError ? [`Current result undefined: ${this.resultError}. The last valid result is shown for reference.`] : [],
+      "Bounded arithmetic provenance describes the original expression, before endpoint edits.",
+      ...this.trace?.diagnostics || [],
+      ...(this.trace?.steps || []).map((step) => `${step.id}: ${step.source} = ${step.value ?? "unresolved"}; ${step.status}; width ${step.width ?? "unknown"}${step.reason ? `; ${step.reason}` : ""}`),
+      ...this.links ? [
+        `Farey parents: ${this.links.parents.join(", ")}; mediant: ${this.links.mediant}`,
+        `Stern–Brocot path: ${this.links.pathDiagnostic || this.links.path.join(" ") || "root"}`,
+        `Continued fraction: ${this.links.continuedFraction.join(", ")}${this.links.truncated ? "; term limit reached" : ""}`,
+        ...this.links.convergents.map((entry) => `Convergent ${entry.value}; exact error ${entry.error}`)
+      ] : []
+    ].join(`
+`);
+  }
   resultSource() {
-    return exactSource(this.items.at(-1).value);
+    const value = this.items.at(-1).value;
+    return value.start.equals(value.end) ? String(value.start) : exactSource(value);
   }
   useResult() {
+    if (this.resultError) {
+      this.statusElement.textContent = this.resultError;
+      return;
+    }
     this.onUse(this.resultSource());
     this.close();
   }
   download(kind) {
-    const svg = this.svg?.outerHTML || "";
-    const content = kind === "svg" ? `<?xml version="1.0" encoding="UTF-8"?>
-${svg}` : `<!doctype html><html lang="en"><meta charset="utf-8"><title>RiX exact interval</title><body><h1>Exact interval</h1><p><code>${escapeHtml(this.resultSource())}</code></p>${svg}<p>Coordinates are approximate pixels; labels retain exact values.</p></body></html>`;
-    const blob = new Blob([content], { type: kind === "svg" ? "image/svg+xml" : "text/html" });
+    if (kind === "svg" && !this.graphic) {
+      this.statusElement.textContent = "SVG is unavailable because this value exceeds the graphic work budget. Export text or HTML for the exact value.";
+      return;
+    }
+    const svg = this.graphic ? renderGraphicSvg(this.graphic, String) : "";
+    const text = this.explorationText();
+    const content = kind === "txt" ? text : kind === "svg" ? `<?xml version="1.0" encoding="UTF-8"?>
+${svg}` : `<!doctype html><html lang="en"><meta charset="utf-8"><title>RiX exact exploration</title><body><h1>Exact exploration</h1><p>${this.resultError ? "Previous valid result; the current result is undefined: " : ""}<code>${escapeHtml(this.resultSource())}</code></p>${this.graphic ? renderOutputHtml(this.graphic, String) : svg}${this.provenanceElement.innerHTML}<p>Coordinates are approximate pixels; labels retain exact values.</p></body></html>`;
+    const blob = new Blob([content], { type: kind === "svg" ? "image/svg+xml" : kind === "txt" ? "text/plain" : "text/html" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -395,6 +400,99 @@ ${svg}` : `<!doctype html><html lang="en"><meta charset="utf-8"><title>RiX exact
     URL.revokeObjectURL(url);
     this.statusElement.textContent = `Exported exact interval ${kind.toUpperCase()}.`;
   }
+}
+
+// src/dashboard-state.js
+var DASHBOARD_LIMITS = Object.freeze({ variables: 128, samples: 64, sourceBytes: 8192, groupLength: 80 });
+function dashboardPresentation(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    value = {};
+  const names = Array.isArray(value.pinned) ? value.pinned : [];
+  const groups = value.groups && typeof value.groups === "object" && !Array.isArray(value.groups) ? value.groups : {};
+  return {
+    schema: "rix.web.dashboard-presentation@1",
+    pinned: [...new Set(names.filter((name) => typeof name === "string" && name.length <= 256))].slice(0, DASHBOARD_LIMITS.variables),
+    groups: Object.fromEntries(Object.entries(groups).filter(([name, group]) => name.length <= 256 && typeof group === "string").slice(0, DASHBOARD_LIMITS.variables).map(([name, group]) => [name, group.trim().slice(0, DASHBOARD_LIMITS.groupLength)]))
+  };
+}
+function recordDashboardHistory(histories, descriptors, limit = DASHBOARD_LIMITS.samples) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > DASHBOARD_LIMITS.samples)
+    throw new Error("Dashboard history limit must be 1–64");
+  const live = new Set(descriptors.slice(0, DASHBOARD_LIMITS.variables).map((descriptor) => descriptor.id ?? descriptor.name));
+  for (const id of histories.keys())
+    if (!live.has(id))
+      histories.delete(id);
+  for (const descriptor of descriptors.slice(0, DASHBOARD_LIMITS.variables)) {
+    const id = descriptor.id ?? descriptor.name;
+    const history = histories.get(id) || { samples: [], dropped: 0, revision: 0 };
+    histories.set(id, history);
+    const source = String(descriptor.sourceText ?? "");
+    if (new TextEncoder().encode(source).length > DASHBOARD_LIMITS.sourceBytes) {
+      history.diagnostic = "Value exceeds the 8192-byte history limit; current exact value remains available.";
+      continue;
+    }
+    history.diagnostic = null;
+    const previous = history.samples.at(-1);
+    if (previous?.source === source && previous?.state === descriptor.state)
+      continue;
+    let bounds = null;
+    if (descriptor.value instanceof RationalInterval)
+      bounds = [String(descriptor.value.start), String(descriptor.value.end)];
+    else if (descriptor.value instanceof Rational || descriptor.value instanceof Integer)
+      bounds = [String(descriptor.value), String(descriptor.value)];
+    history.samples.push(Object.freeze({ revision: ++history.revision, source, state: descriptor.state, bounds: bounds && Object.freeze(bounds) }));
+    if (history.samples.length > limit) {
+      history.samples.shift();
+      history.dropped += 1;
+    }
+  }
+  return histories;
+}
+function dashboardHistoryGraphic(history) {
+  const samples = (history?.samples || []).filter((sample) => sample.bounds && sample.state !== "error");
+  if (!samples.length)
+    return null;
+  const endpoints = samples.flatMap((sample) => sample.bounds.map((source) => new Rational(source)));
+  let low = endpoints[0], high = endpoints[0];
+  for (const value of endpoints) {
+    if (value.lessThan(low))
+      low = value;
+    if (value.greaterThan(high))
+      high = value;
+  }
+  if (low.equals(high)) {
+    low = low.subtract(new Rational(1));
+    high = high.add(new Rational(1));
+  }
+  const span = high.subtract(low);
+  const x = (index) => new Rational(15).add(new Rational(BigInt(index * 270), BigInt(Math.max(1, samples.length - 1))));
+  const y = (source) => new Rational(70).subtract(new Rational(source).subtract(low).divide(span).multiply(new Rational(55)));
+  const paths = samples.map((sample, index) => ({
+    type: "output",
+    kind: "path",
+    points: [[x(index), y(sample.bounds[0])], [x(index), y(sample.bounds[1])]],
+    style: new Map([["stroke", "#7c3aed"], ["width", 2], ["id", `history-${sample.revision}`]])
+  }));
+  const points = samples.map((sample, index) => [x(index), y(sample.bounds[0])]);
+  const rangeLabel = `Range ${low} to ${high}`;
+  const label = (text, at, id) => ({
+    type: "output",
+    kind: "text_mark",
+    text,
+    position: [new Rational(15), new Rational(at)],
+    style: new Map([["size", 9], ["fill", "#475569"], ["id", id]])
+  });
+  return { type: "output", kind: "graphic", size: [300, 85], children: [
+    { type: "output", kind: "path", points, style: new Map([["stroke", "#2563eb"], ["fill", "none"], ["width", 2], ["id", "history-series"]]) },
+    ...paths,
+    label(`Observed revisions ${samples[0].revision}–${samples.at(-1).revision}`, 10, "history-revisions"),
+    label(rangeLabel.length > 54 ? `${rangeLabel.slice(0, 51)}…` : rangeLabel, 82, "history-range")
+  ], metadata: new Map([["plot", new Map([["title", "Bounded exact value history"], ["kind", "history"], ["series", [new Map([
+    ["id", "history"],
+    ["label", "Retained revisions"],
+    ["data", points],
+    ["originalData", samples.map((sample) => [new Rational(sample.revision), new RationalInterval(...sample.bounds)])]
+  ])]]])]]) };
 }
 
 // src/reactive-dashboard.js
@@ -411,14 +509,20 @@ function listHtml(title, names, empty) {
   const content = names.length ? names.map((name) => `<code>${escapeHtml2(name)}</code>`).join("") : `<span>${empty}</span>`;
   return `<div class="reactive-links"><b>${title}</b><div>${content}</div></div>`;
 }
-function reactiveVariableCardsHtml(descriptors) {
+function reactiveVariableCardsHtml(descriptors, { presentation = dashboardPresentation(), histories = new Map } = {}) {
   return descriptors.map((descriptor) => {
     const role = descriptor.controls.length ? "controlled" : descriptor.dependencies.length ? "derived" : "input";
     const aliases = descriptor.aliases.filter((name) => name !== descriptor.name);
     const formula = descriptor.dependencies.length && descriptor.formulaSource ? `<div class="reactive-formula"><b>Formula</b><code>${escapeHtml2(descriptor.formulaSource)}</code></div>` : "";
     const diagnostics = descriptor.diagnostics.length ? `<ul class="reactive-diagnostics">${descriptor.diagnostics.map((message) => `<li>${escapeHtml2(message)}</li>`).join("")}</ul>` : "";
-    return `<article class="reactive-variable-card" data-reactive-state="${escapeHtml2(descriptor.state)}">
+    const pinned = presentation.pinned.includes(descriptor.name);
+    const group = Object.hasOwn(presentation.groups, descriptor.name) ? presentation.groups[descriptor.name] : "";
+    const history = histories.get(descriptor.id ?? descriptor.name);
+    const graphic = dashboardHistoryGraphic(history);
+    const historyHtml = history ? `<details class="reactive-history"><summary>Value history (${history.samples.length}/${DASHBOARD_LIMITS.samples})</summary>${history.dropped ? `<p>${history.dropped} older changes discarded at the history limit.</p>` : ""}${history.diagnostic ? `<p>${escapeHtml2(history.diagnostic)}</p>` : ""}${graphic ? renderOutputHtml(graphic, String) : ""}<table><caption>Exact retained revisions</caption><thead><tr><th>Revision</th><th>Value</th><th>State</th></tr></thead><tbody>${history.samples.map((sample) => `<tr><th>${sample.revision}</th><td><button type="button" data-dashboard-use="${escapeHtml2(sample.source)}">${escapeHtml2(sample.source)}</button></td><td>${escapeHtml2(sample.state)}</td></tr>`).join("")}</tbody></table>${graphic ? `<button type="button" data-dashboard-history-export="${escapeHtml2(descriptor.name)}">Export history SVG</button>` : ""}</details>` : "";
+    return `<article class="reactive-variable-card" data-dashboard-name="${escapeHtml2(descriptor.name)}" data-reactive-state="${escapeHtml2(descriptor.state)}">
             <header><div><code>$$${escapeHtml2(descriptor.name)}</code>${aliases.length ? `<small>aliases: ${aliases.map(escapeHtml2).join(", ")}</small>` : ""}</div><span class="reactive-role ${role}">${role}</span></header>
+            <div class="reactive-organization"><button type="button" data-dashboard-pin="${escapeHtml2(descriptor.name)}" aria-pressed="${pinned}">${pinned ? "Unpin" : "Pin"}</button><label>Group <input data-dashboard-group="${escapeHtml2(descriptor.name)}" value="${escapeHtml2(group)}" maxlength="80" placeholder="Ungrouped"></label></div>
             <button type="button" class="reactive-value" data-dashboard-use="${escapeHtml2(descriptor.sourceText)}" title="Use this exact value in the calculator">${escapeHtml2(descriptor.valueText)}</button>
             ${formula}
             <div class="reactive-dependency-grid">
@@ -426,6 +530,7 @@ function reactiveVariableCardsHtml(descriptors) {
                 ${listHtml("Feeds", descriptor.dependents, "none")}
             </div>
             ${diagnostics}
+            ${historyHtml}
             <footer><span>${escapeHtml2(descriptor.state)}</span><button type="button" data-dashboard-read="${escapeHtml2(descriptor.name)}">Insert $${escapeHtml2(descriptor.name)}</button></footer>
         </article>`;
   }).join("");
@@ -448,6 +553,9 @@ class ReactiveDashboard {
     this.reactiveDisposer = null;
     this.renderQueued = false;
     this.descriptors = [];
+    this.presentation = dashboardPresentation();
+    this.histories = new Map;
+    this.historyDisposers = [];
     panel.addEventListener("click", (event) => {
       const use = event.target.closest("[data-dashboard-use]");
       if (use)
@@ -457,6 +565,22 @@ class ReactiveDashboard {
         this.onUse(`$${read.dataset.dashboardRead}`);
       if (event.target.closest("[data-dashboard-example]"))
         this.onLoadExample();
+      const pin = event.target.closest("[data-dashboard-pin]");
+      if (pin) {
+        const name = pin.dataset.dashboardPin;
+        this.presentation.pinned = this.presentation.pinned.includes(name) ? this.presentation.pinned.filter((entry) => entry !== name) : [...this.presentation.pinned, name].slice(-DASHBOARD_LIMITS.variables);
+        this.renderVariables();
+      }
+      const exported = event.target.closest("[data-dashboard-history-export]");
+      if (exported)
+        this.exportHistory(exported.dataset.dashboardHistoryExport);
+    });
+    panel.addEventListener("change", (event) => {
+      const name = event.target.dataset.dashboardGroup;
+      if (!name)
+        return;
+      this.presentation = dashboardPresentation({ ...this.presentation, groups: { ...this.presentation.groups, [name]: event.target.value } });
+      this.renderVariables();
     });
   }
   get isOpen() {
@@ -481,6 +605,7 @@ class ReactiveDashboard {
       this.open();
   }
   disposeMounted() {
+    this.historyDisposers.splice(0).forEach((dispose) => dispose());
     this.controlDisposer?.();
     this.controlDisposer = null;
     this.reactiveDisposer?.();
@@ -505,7 +630,7 @@ class ReactiveDashboard {
     const failed = this.descriptors.filter(({ state }) => state === "error").length;
     const count = this.descriptors.length;
     this.countElement.textContent = `${count} reactive ${count === 1 ? "value" : "values"}`;
-    this.summaryElement.innerHTML = `<span><b>${count}</b> total</span><span><b>${controlled}</b> controlled</span><span><b>${derived}</b> derived</span><span${failed ? ' class="has-error"' : ""}><b>${failed}</b> errors</span>`;
+    this.summaryElement.innerHTML = `${count > DASHBOARD_LIMITS.variables ? `<p>History is limited to the first ${DASHBOARD_LIMITS.variables} values in name order. All current values remain available.</p>` : ""}<span><b>${count}</b> total</span><span><b>${controlled}</b> controlled</span><span><b>${derived}</b> derived</span><span${failed ? ' class="has-error"' : ""}><b>${failed}</b> errors</span>`;
     this.toggle.dataset.count = String(count);
     this.toggle.setAttribute("aria-label", `Reactive dashboard, ${count} ${count === 1 ? "value" : "values"}`);
   }
@@ -513,7 +638,46 @@ class ReactiveDashboard {
     const hasValues = this.descriptors.length > 0;
     this.emptyElement.hidden = hasValues;
     this.variablesElement.hidden = !hasValues;
-    this.variablesElement.innerHTML = reactiveVariableCardsHtml(this.descriptors);
+    const active = this.panel.ownerDocument?.activeElement;
+    const focusedName = active?.dataset?.dashboardPin || active?.dataset?.dashboardGroup;
+    const focusedKind = active?.dataset?.dashboardPin ? "pin" : "group";
+    const openHistory = new Set([...this.variablesElement.querySelectorAll("[data-dashboard-name]")].filter((card) => card.querySelector(".reactive-history")?.open).map((card) => card.dataset.dashboardName));
+    this.historyDisposers.splice(0).forEach((dispose) => dispose());
+    const groups = new Map;
+    for (const descriptor of this.descriptors) {
+      const group = this.presentation.pinned.includes(descriptor.name) ? "Pinned" : Object.hasOwn(this.presentation.groups, descriptor.name) && this.presentation.groups[descriptor.name] || "Ungrouped";
+      if (!groups.has(group))
+        groups.set(group, []);
+      groups.get(group).push(descriptor);
+    }
+    this.variablesElement.innerHTML = [...groups].sort(([a], [b]) => a === "Pinned" ? -1 : b === "Pinned" ? 1 : a.localeCompare(b)).map(([name, descriptors]) => `<section class="reactive-variable-group"><h3>${escapeHtml2(name)}</h3>${reactiveVariableCardsHtml(descriptors, this)}</section>`).join("");
+    for (const card of this.variablesElement.querySelectorAll("[data-dashboard-name]")) {
+      const descriptor = this.descriptors.find(({ name }) => name === card.dataset.dashboardName);
+      const history = this.histories.get(descriptor.id ?? descriptor.name);
+      const graphic = dashboardHistoryGraphic(history);
+      if (graphic)
+        this.historyDisposers.push(mountOutputWidgets(card, graphic, { format: String }));
+      const details = card.querySelector(".reactive-history");
+      if (details)
+        details.open = openHistory.has(descriptor.name);
+      if (descriptor.name === focusedName)
+        card.querySelector(`[data-dashboard-${focusedKind}]`)?.focus({ preventScroll: true });
+    }
+  }
+  restorePresentation(value) {
+    this.presentation = dashboardPresentation(value);
+  }
+  exportHistory(name) {
+    const descriptor = this.descriptors.find((entry) => entry.name === name);
+    const graphic = descriptor && dashboardHistoryGraphic(this.histories.get(descriptor.id ?? descriptor.name));
+    if (!graphic)
+      return;
+    const url = URL.createObjectURL(new Blob([renderGraphicSvg(graphic, String)], { type: "image/svg+xml" }));
+    const link = this.panel.ownerDocument.createElement("a");
+    link.href = url;
+    link.download = "rix-value-history.svg";
+    link.click();
+    URL.revokeObjectURL(url);
   }
   renderControls() {
     this.controlDisposer?.();
@@ -538,6 +702,7 @@ class ReactiveDashboard {
   }
   refresh({ rebuildControls = true, resubscribe = true } = {}) {
     this.descriptors = this.repl.reactiveVariables();
+    recordDashboardHistory(this.histories, this.descriptors);
     this.renderSummary();
     if (!this.isOpen)
       return;
@@ -1110,6 +1275,7 @@ function createSessionSnapshot({
   numberConfig = {},
   reactiveInputs = [],
   dashboardOpen = false,
+  dashboardPresentation: dashboardPresentation2 = {},
   pluginProfile = null,
   savedAt = new Date().toISOString()
 } = {}) {
@@ -1133,6 +1299,7 @@ function createSessionSnapshot({
       source: requiredString(entry?.source, `Reactive input ${index + 1} source`)
     })),
     dashboardOpen: Boolean(dashboardOpen),
+    dashboardPresentation: dashboardPresentation(dashboardPresentation2),
     pluginProfile: sessionPluginProfile(pluginProfile)
   };
 }
@@ -1265,6 +1432,7 @@ var clearCoordinator = new ClearCoordinator;
 var intervalExplorer = new IntervalExplorer({
   dialog: intervalDialog,
   evaluate: (source) => repl.run(source),
+  inspect: (source) => repl.readExactLeaf(source),
   onUse: (source) => setInput(source)
 });
 var reactiveDashboard = new ReactiveDashboard({
@@ -1401,10 +1569,10 @@ function appendOutput(source, response) {
         const explore = document.createElement("button");
         explore.type = "button";
         explore.className = "interval-explore-button";
-        explore.textContent = "Explore interval";
+        explore.textContent = "Explore exact value";
         explore.addEventListener("click", (event) => {
           event.stopPropagation();
-          intervalExplorer.open(source, response.value);
+          intervalExplorer.open(source, response.value, response.exactTrace);
         });
         outputLine.appendChild(explore);
       }
@@ -1498,6 +1666,7 @@ function currentSessionSnapshot() {
     numberConfig: repl.numberConfig(),
     reactiveInputs,
     dashboardOpen: reactiveDashboard.isOpen,
+    dashboardPresentation: reactiveDashboard.presentation,
     pluginProfile: repl.pluginProfile()
   });
 }
@@ -1612,6 +1781,7 @@ async function clearSession(options = {}) {
   transcript = [];
   outputHistory.innerHTML = "";
   displayWelcome();
+  reactiveDashboard.restorePresentation({});
   reactiveDashboard.refresh();
   setInput("");
   clearCoordinator.reset();
@@ -1771,6 +1941,7 @@ async function restoreSession(session) {
     if (response.type === "error")
       throw new Error(`Could not restore reactive input ${reactive.name}: ${response.text}`);
   }
+  reactiveDashboard.restorePresentation(session.dashboardPresentation);
   reactiveDashboard.refresh();
   setScriptMode(session.scriptMode);
   setInput(session.input);
@@ -1847,6 +2018,9 @@ document.addEventListener("click", (event) => {
       break;
     case "interval-export-html":
       intervalExplorer.download("html");
+      break;
+    case "interval-export-text":
+      intervalExplorer.download("txt");
       break;
     case "interval-use":
       intervalExplorer.useResult();
@@ -1988,5 +2162,5 @@ window.addEventListener("pagehide", () => {
   repl.dispose();
 });
 
-//# debugId=47AB5FC5D6C593A264756E2164756E21
+//# debugId=1337201C9F8B582A64756E2164756E21
 //# sourceMappingURL=main.js.map
