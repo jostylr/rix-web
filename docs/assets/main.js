@@ -1,12 +1,12 @@
 import {
   createSternBrocotRixBridge
-} from "./chunk-mdjjda8c.js";
+} from "./chunk-dry0rv5a.js";
 import {
   createRixRepl,
   findHelp,
   pluginProfileFromUrl,
   stripMarkedPluginProfile
-} from "./chunk-z8axd7qs.js";
+} from "./chunk-btazq016.js";
 import {
   Integer,
   Rational,
@@ -20,7 +20,7 @@ import {
   renderGraphicSvg,
   renderOutputHtml,
   traceExactArithmetic
-} from "./chunk-f4fq1e6m.js";
+} from "./chunk-kx4t6gwn.js";
 import"./chunk-9v01vpwy.js";
 
 // src/interval-explorer.js

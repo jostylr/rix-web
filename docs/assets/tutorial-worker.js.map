@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "sources": ["../../src/tutorial-worker.js"],
+  "sourcesContent": [
+    "import { createRixRepl } from \"./repl-runtime.js\";\nimport { replayTutorialSourcesAsync } from \"./tutorial-replay.js\";\nimport { encodeOutputJSON } from \"../../rix/src/runtime/output-json.js\";\n\nself.onmessage = async ({ data: sources }) => {\n    try {\n        const response = await replayTutorialSourcesAsync(sources, sources.length - 1, createRixRepl);\n        if (!response) { self.postMessage({ response: null }); return; }\n        const { type, text, html, groups } = response;\n        let valueJSON = null;\n        if (html) {\n            try {\n                // Live controls and editable sheets require the local session.\n                if (response.observe) throw new Error(\"Live output\");\n                valueJSON = encodeOutputJSON(response.value);\n            } catch {\n                self.postMessage({ localSessionRequired: true });\n                return;\n            }\n        }\n        self.postMessage({ response: { type, text, html, groups, valueJSON } });\n    } catch (error) {\n        self.postMessage({ response: { type: \"error\", text: error.message || String(error) } });\n    }\n};\n"
+  ],
+  "mappings": ";;;;;;;;;;;;AAIA,KAAK,YAAY,SAAS,MAAM,cAAc;AAAA,EAC1C,IAAI;AAAA,IACA,MAAM,WAAW,MAAM,2BAA2B,SAAS,QAAQ,SAAS,GAAG,aAAa;AAAA,IAC5F,IAAI,CAAC,UAAU;AAAA,MAAE,KAAK,YAAY,EAAE,UAAU,KAAK,CAAC;AAAA,MAAG;AAAA,IAAQ;AAAA,IAC/D,QAAQ,MAAM,MAAM,MAAM,WAAW;AAAA,IACrC,IAAI,YAAY;AAAA,IAChB,IAAI,MAAM;AAAA,MACN,IAAI;AAAA,QAEA,IAAI,SAAS;AAAA,UAAS,MAAM,IAAI,MAAM,aAAa;AAAA,QACnD,YAAY,iBAAiB,SAAS,KAAK;AAAA,QAC7C,MAAM;AAAA,QACJ,KAAK,YAAY,EAAE,sBAAsB,KAAK,CAAC;AAAA,QAC/C;AAAA;AAAA,IAER;AAAA,IACA,KAAK,YAAY,EAAE,UAAU,EAAE,MAAM,MAAM,MAAM,QAAQ,UAAU,EAAE,CAAC;AAAA,IACxE,OAAO,OAAO;AAAA,IACZ,KAAK,YAAY,EAAE,UAAU,EAAE,MAAM,SAAS,MAAM,MAAM,WAAW,OAAO,KAAK,EAAE,EAAE,CAAC;AAAA;AAAA;",
+  "debugId": "04D4D8F784A35B1364756E2164756E21",
+  "names": []
+}

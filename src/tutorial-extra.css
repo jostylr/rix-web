@@ -33,3 +33,13 @@
 .lint-diagnostics span:not(.lint-code):not(.lint-severity):not(.lint-location), .lint-diagnostics small { display: block; }
 .lint-diagnostics small { color: #625d73; }
 @media (max-width: 520px) { .tutorial-cell > header { align-items: flex-start; gap: 8px; }.tutorial-cell-actions { flex-wrap: wrap; justify-content: flex-end; } }
+
+/* Keep long contents menus within the viewport, independently of the lesson. */
+.lesson-sidebar { max-height: calc(100dvh - 24px); overflow-y: auto; overscroll-behavior-y: contain; }
+@media (min-width: 761px) and (max-width: 920px) {
+  .tutorial-shell.docs-open .lesson-sidebar { height: 100%; min-height: 0; }
+}
+.tutorial-cell header button.tutorial-stop { background: #b91c1c; border-color: #991b1b; animation: tutorial-running-pulse 2s ease-in-out infinite; }
+.tutorial-run-status { font-size: 11px; text-transform: none; letter-spacing: normal; }
+@keyframes tutorial-running-pulse { 50% { background-color: #ef4444; box-shadow: 0 0 0 3px rgb(239 68 68 / .2); } }
+@media (prefers-reduced-motion: reduce) { .tutorial-cell header button.tutorial-stop { animation: none; } }

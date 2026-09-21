@@ -1,13 +1,13 @@
 import {
   createSternBrocotRixBridge
-} from "./chunk-mdjjda8c.js";
+} from "./chunk-dry0rv5a.js";
 import {
   BaseSystem,
   Fraction,
   Integer,
   Rational,
   RationalInterval
-} from "./chunk-f4fq1e6m.js";
+} from "./chunk-kx4t6gwn.js";
 import"./chunk-9v01vpwy.js";
 
 // ../packages/reals/src/index.js

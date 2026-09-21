@@ -36,6 +36,7 @@ const result = await Bun.build({
         path.join(source, "numeral-playground.js"),
         path.join(source, "stern-brocot-web.js"),
         path.join(source, "tutorial-runner.js"),
+        path.join(source, "tutorial-worker.js"),
         path.join(source, "tutorial-navigation-client.js"),
     ],
     outdir: assets,

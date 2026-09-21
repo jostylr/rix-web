@@ -5,7 +5,7 @@ import {
   createDefaultSystemContext,
   formatValue,
   parseAndEvaluate
-} from "./chunk-f4fq1e6m.js";
+} from "./chunk-kx4t6gwn.js";
 
 // src/rix-stern-brocot-bridge.js
 function mapField(value, name) {
@@ -135,4 +135,4 @@ function createSternBrocotRixBridge() {
 export { createSternBrocotRixBridge };
 
 //# debugId=F2A9BCC8CA3E149564756E2164756E21
-//# sourceMappingURL=chunk-mdjjda8c.js.map
+//# sourceMappingURL=chunk-dry0rv5a.js.map

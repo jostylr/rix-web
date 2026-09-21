@@ -8,7 +8,7 @@ import {
   numeralValue,
   parseAndEvaluate,
   renderOutputHtml
-} from "./chunk-f4fq1e6m.js";
+} from "./chunk-kx4t6gwn.js";
 import"./chunk-9v01vpwy.js";
 
 // src/numeral-playground-model.js

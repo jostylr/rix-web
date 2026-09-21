@@ -6,7 +6,25 @@ import { lintTutorialSource } from "./tutorial-lint.js";
 import { mountTutorialNavigation } from "./tutorial-navigation.js";
 import { formatValue, mountOutputWidgets } from "../../rix/src/index.js";
 
+import { startTutorialExecution } from "./tutorial-execution.js";
+import { decodeOutputJSON } from "../../rix/src/runtime/output-json.js";
+
 const outputDisposers = new WeakMap();
+const runningCells = new WeakMap();
+const completedSources = new WeakMap();
+
+function updateRunButton(cell) {
+    const button = cell.querySelector("[data-tutorial-run]");
+    if (!button || runningCells.has(cell)) return;
+    button.textContent = completedSources.get(cell) === cell.querySelector("[data-tutorial-source]").value
+        ? "Re-Run Cell" : "Run Cell";
+}
+
+function sourceChanged(input) {
+    completedSources.delete(input.closest(".tutorial-cell"));
+    updateRunButton(input.closest(".tutorial-cell"));
+    sizeTutorialSource(input);
+}
 
 mountTutorialNavigation();
 
@@ -34,28 +52,78 @@ function insertTutorialText(input, text) {
         : text;
     input.value = `${input.value.slice(0, start)}${insertion}${input.value.slice(end)}`;
     input.selectionStart = input.selectionEnd = start + insertion.length;
-    sizeTutorialSource(input);
+    sourceChanged(input);
     input.focus();
 }
 
-async function replayThrough(cell) {
+function sourcesThrough(cell) {
     const content = cell.closest(".lesson-content") || document;
     const entries = [...content.querySelectorAll("h2, .tutorial-cell")].map((node) => ({
         type: node.matches("h2") ? "heading" : "cell",
         value: node,
     }));
     const cells = tutorialSectionCells(entries, cell);
-    return replayTutorialSourcesAsync(
-        cells.map((candidate) => candidate.querySelector("[data-tutorial-source]")?.value),
-        cells.length - 1,
-        createRixRepl,
-    );
+    return cells.map((candidate) => candidate.querySelector("[data-tutorial-source]")?.value);
 }
 
 async function runCell(cell) {
+    const active = runningCells.get(cell);
+    if (active) { active.stop(); return; }
     const sourceInput = cell.querySelector("[data-tutorial-source]");
-    const response = await replayThrough(cell);
-    if (!response) return;
+    const source = sourceInput.value;
+    const button = cell.querySelector("[data-tutorial-run]");
+    const lintButton = cell.querySelector("[data-tutorial-lint]");
+    const output = cell.querySelector("[data-tutorial-output]");
+    completedSources.delete(cell);
+    output.setAttribute("aria-busy", "true");
+    button.textContent = "Stop";
+    button.classList.add("tutorial-stop");
+    if (lintButton) lintButton.disabled = true;
+    let status = cell.querySelector(".tutorial-run-status");
+    if (!status) {
+        status = document.createElement("span");
+        status.className = "tutorial-run-status";
+        status.setAttribute("role", "status");
+        button.before(status);
+    }
+    status.textContent = "Running…";
+    try {
+        const sources = sourcesThrough(cell);
+        const execution = startTutorialExecution(sources);
+        runningCells.set(cell, execution);
+        const result = await execution.result;
+        if (result.stopped) { status.textContent = "Stopped"; return; }
+        let response = result.response;
+        if (result.localSessionRequired) {
+            // Live widgets retain their session and callbacks on the UI thread.
+            button.textContent = "Running…";
+            button.disabled = true;
+            runningCells.set(cell, { stop() {} });
+            status.textContent = "Preparing interactive output…";
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            response = await replayTutorialSourcesAsync(sources, sources.length - 1, createRixRepl);
+        } else if (response?.valueJSON) {
+            response.value = decodeOutputJSON(response.valueJSON).value;
+        }
+        if (!response) { status.textContent = ""; return; }
+        renderCellResponse(cell, response);
+        if (response.type !== "error" && sourceInput.value === source) completedSources.set(cell, source);
+        status.textContent = response.type === "error" ? "Failed" : "Done";
+    } catch (error) {
+        renderCellResponse(cell, { type: "error", text: error.message || String(error) });
+        status.textContent = "Failed";
+    } finally {
+        runningCells.delete(cell);
+        output.setAttribute("aria-busy", "false");
+        button.disabled = false;
+        button.classList.remove("tutorial-stop");
+        if (lintButton) lintButton.disabled = false;
+        updateRunButton(cell);
+    }
+}
+
+function renderCellResponse(cell, response) {
+    const sourceInput = cell.querySelector("[data-tutorial-source]");
     const output = cell.querySelector("[data-tutorial-output]");
     outputDisposers.get(output)?.();
     outputDisposers.delete(output);
@@ -154,6 +222,7 @@ document.addEventListener("click", (event) => {
 });
 const tutorialSources = document.querySelectorAll("[data-tutorial-source]");
 tutorialSources.forEach((input) => {
+    input.addEventListener("input", () => sourceChanged(input));
     input.addEventListener("keydown", (event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
             event.preventDefault();
@@ -166,7 +235,7 @@ tutorialSources.forEach((input) => {
             input.value = edit.value;
             input.selectionStart = edit.start;
             input.selectionEnd = edit.end;
-            sizeTutorialSource(input);
+            sourceChanged(input);
         }
     });
 });
