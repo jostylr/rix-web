@@ -63,9 +63,9 @@ test("getting started builds a complete finite FizzBuzz result from fresh state"
     }
 });
 
-test("FizzBuzz variants match the introductory program across two full cycles", async () => {
+test("four FizzBuzz forms agree across two full cycles", async () => {
     const source = await Bun.file(new URL("../tutorials/problem-fizzbuzz.md", import.meta.url)).text();
-    const programs = ["RiX", "RiX with a multifunction"].map((heading) => {
+    const programs = ["RiX", "RiX with a multifunction", "Compact comparison", "Case-block solution"].map((heading) => {
         const section = source.split(new RegExp(`^## ${heading}\\n`, "m"))[1];
         return section?.match(/```rix edu\n([\s\S]*?)\n```/)?.[1];
     });
@@ -75,17 +75,20 @@ test("FizzBuzz variants match the introductory program across two full cycles", 
     for (const program of programs) {
         const repl = createRixRepl({ autoLoadPlugins: false });
         try {
-            expect((await repl.runAsync(program)).type).toBe("result");
-            const result = await repl.runAsync("[1 |+ 1 |; 30] |>> (n) -> FizzBuzz(n);");
+            const expanded = program.replace("[1 |+ 1 |; 15]", "[1 |+ 1 |; 30]");
+            expect(expanded).not.toBe(program);
+            const result = await repl.runAsync(expanded);
             expect(result.type).toBe("result");
             outputs.push(result.text);
         } finally {
             await repl.dispose();
         }
     }
-    expect(outputs[1]).toBe(outputs[0]);
-    expect(outputs[1].split(", ")[14]).toBe("FizzBuzz");
-    expect(outputs[1].split(", ")[29]).toBe("FizzBuzz]");
+    for (const output of outputs.slice(1)) expect(output).toBe(outputs[0]);
+    const values = outputs[0].slice(1, -1).split(", ");
+    expect(values).toHaveLength(30);
+    expect(values[14]).toBe("FizzBuzz");
+    expect(values[29]).toBe("FizzBuzz");
 });
 
 test("fraction reduction variants agree for ordinary and zero-denominator inputs", async () => {

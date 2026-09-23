@@ -81,6 +81,42 @@ FizzBuzz(n) /Number/ => n;
 
 The order matters: fifteen must be checked before three and five. This form is useful when each rule deserves its own named branch. See [Multifunctions](multifunctions.html) for dispatch details, including what happens when a guard is undecided.
 
+## Compact comparison
+
+Here is the same program with the names and explanatory spacing pared down. Both expressions produce the fifteen FizzBuzz values.
+
+~~~javascript
+console.log(Array.from({length:15},(_,i)=>{let n=i+1;return n%15?n%3?n%5?n:"Buzz":"Fizz":"FizzBuzz"}));
+~~~
+
+```rix edu
+[1 |+ 1 |; 15] |>> {>
+    (n) ?- [n%15==0] -> "FizzBuzz",
+    (n) ?- [n%3==0] -> "Fizz",
+    (n) ?- [n%5==0] -> "Buzz",
+    (n) -> n
+};
+```
+
+The `{> ... }` group is an anonymous multifunction. The map pipe calls it for each number, so there is no need to repeat a function name or name the variants. As above, the first matching rule wins. The JavaScript expression uses nested ternaries for the same priority order.
+
+## Case-block solution
+
+Use `{? ... }` when one function should choose among several results without defining separate variants:
+
+```rix edu
+FizzBuzz(n) -> {?
+    n % 15 == 0 ? "FizzBuzz";
+    n % 3 == 0 ? "Fizz";
+    n % 5 == 0 ? "Buzz";
+    n
+};
+
+[1 |+ 1 |; 15] |>> FizzBuzz;
+```
+
+The case block checks each condition in order and returns the first matching value. Its final `n` is the fallback for numbers divisible by neither three nor five. Compare [Ternaries and cases](ternaries.html) for more on case-block behavior.
+
 :::challenge Configurable words
 Define ReplaceMultiples(n, divisor, word), then build a variant for multiples of two and seven.
 :::
