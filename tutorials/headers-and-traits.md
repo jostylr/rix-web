@@ -8,10 +8,7 @@ description: Sticky semantics and protocol bundles.
 
 Headers attach names, types, traits, and capture modes to constructed values. Traits describe protocols; types can supply conversion and method behavior.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
+Headers and traits describe protocol choices; read the header on the worked example before interpreting its result.
 
 ## A worked example
 
@@ -27,10 +24,7 @@ is being reused when the expression changes.
 
 Sticky semantic headers persist through suitable updates, while ephemeral runtime facts are rebuilt.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Change one semantic choice at a time so its effect remains visible.
 
 :::challenge Headers and traits practice
 Create a headered value with a semantic name and inspect it.
@@ -38,6 +32,4 @@ Create a headered value with a semantic name and inspect it.
 
 ## Keep going
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Physical units](units.html) or [Exact generators](exact-generators.html) for mathematical meaning.

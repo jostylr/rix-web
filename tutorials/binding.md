@@ -1,46 +1,29 @@
 ---
-number: 4
-title: Binding and patterns
-description: Cells, assignments, destructuring, and metadata.
+number: 7
+title: Cells, shared state and patterns
+description: Compare a fresh value with an alias, then update deliberately.
 ---
 
-## Orientation
+## Share or copy a value
 
-A RiX binding names a cell. That makes aliasing and mutation explicit rather than accidental, and destructuring applies the same assignment choices to structured data.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+A RiX binding names a cell. `:=` makes a fresh value; `=` aliases the existing cell. Both names can initially display the same number, but only the alias sees an in-place update.
 
 ```rix edu
 x := 5;
-y = x;
-x += 1;
-y ;
+alias = x;
+copy := x;
+x ~= 6;
+[x, alias, copy];
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+Expect `[6, 6, 5]`. Use [Cells and assignment](cells.html) for identity and deep copying. [Destructuring](destructuring.html) pulls multiple values into names; [Properties and metadata](properties.html) covers value annotations.
 
-## Read the result
+## State in a larger program
 
-The next pages separate cell identity, patterns, and metadata so each rule stays visible.
-
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+An update should be visible at the point where state changes. [Bounded simulation](capstone-simulation.html) uses an explicit loop bound and updates a running balance; read [Brace containers](brace-containers.html) first for the loop form. [Shared ledger](capstone-ledger.html) combines cells and structured data.
 
 :::challenge Binding and patterns practice
-Create one alias and one fresh copy of the same value, then update the original.
+Create `value := 4`, make an alias and a fresh copy, then update `value` to 9. Return the alias and copy; expect `[9, 4]`.
 :::
 
-## Keep going
-
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Semantics, types and units](semantics.html) for values with richer meaning.

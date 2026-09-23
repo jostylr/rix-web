@@ -1,7 +1,7 @@
 ---
 number: 8e
 title: Exact complex numbers
-description: Divide by i, conjugate exact expressions, and inspect real and imaginary parts.
+description: Divide, conjugate, and inspect exact complex values.
 ---
 
 ## Construct complex values

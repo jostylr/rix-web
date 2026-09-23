@@ -1,43 +1,25 @@
 ---
-number: 6b
+number: 4b
 title: Brace containers
-description: Blocks, sigils, loops, and break blocks.
+description: Start with value-producing blocks; revisit bounded loops after cells and scope.
 ---
 
-## Orientation
+## Return a value from a block
 
-Braces create blocks and sigilled containers: `{=`, `{|`, `{:`, `{;`, `{@`, and others. Spaces after a sigil are significant in RiX syntax.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+`{; ... }` groups statements and returns its last value. The result below is 6. A space after the sigil keeps the form clear.
 
 ```rix edu
-{; x := 2; y := 3; x * y } ;
+{; x := 2; y := 3; x * y };
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+Maps (`{=`), sets (`{|`) and tuples (`{:`) have different meanings. Their focused [collection lessons](collections.html) explain how to choose one.
 
-## Read the result
-
-Loop headers separate initialization, condition, body, update, and after slots with semicolons.
-
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
-
-:::challenge Brace containers practice
-Make a block that binds two values and returns their product.
+:::challenge Return a product
+Make a block that binds two exact fractions and returns their product. Use `1/2` and `3/4`; expect `3/8`.
 :::
 
-## Keep going
+## Revisit for loops
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+The `{@ ... }` form repeats work. Read [Cells and assignment](cells.html) and [Scope and imports](scope.html) before using it to update state. The [Bounded simulation](capstone-simulation.html) lesson then shows an explicit stopping condition, a body and an update in one example.
+
+Continue the short route with [Functions and scope](functions.html).

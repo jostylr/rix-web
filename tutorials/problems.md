@@ -8,7 +8,7 @@ description: Compare familiar JavaScript, Python, Julia, and RiX solutions.
 
 A new language becomes easier to understand when it solves recognizable problems. This section presents each task in JavaScript, Python, Julia, and RiX. The first three listings are landmarks, not lessons: read them only far enough to recognize the algorithm. The RiX version is runnable and receives the explanation because this tutorial is about learning RiX.
 
-The examples grow deliberately. Newton square root, FizzBuzz, and the Collatz test are small enough to hold in your head. Prime filtering and matrix multiplication require more structure. Symbolic differentiation uses a capability that ordinary general-purpose languages need an additional library to provide.
+The examples grow deliberately. [FizzBuzz](problem-fizzbuzz.html) revisits the program from [Getting started](getting-started.html), and the [Collatz test](problem-collatz.html) adds bounded recursion. [Newton square root](problem-newton.html) brings numerical tolerance into the picture. Prime filtering and matrix multiplication require more structure. Symbolic differentiation uses a capability that ordinary general-purpose languages need an additional library to provide.
 
 ## What to watch for
 

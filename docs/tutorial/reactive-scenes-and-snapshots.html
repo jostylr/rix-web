@@ -49,7 +49,7 @@ $$elements.Touch();
 }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Snapshots are ordinary structured output. Put one in a Fragment, Figure, Slide, or report without teaching each host about a special-purpose comic format. A later grid or print renderer can group the linear list by <code>origin[&quot;entry&quot;]</code> and <code>origin[&quot;state&quot;]</code>.</p>
 <h2>Sequence the same scene states</h2>
-<p><code>.Timeline.Sequence</code> accepts the same scene-entry shape and retains the exact, already materialized frames. <code>.Timeline.Render</code> selects a one-based frame for a static renderer. The [GIF tutorial](plugin-gif.html) covers bounded animation export from retained frames. Video codecs are a separate host capability; a timeline value alone does not promise video encoding.</p>
+<p><code>.Timeline.Sequence</code> accepts the same scene-entry shape and retains the exact, already materialized frames. <code>.Timeline.Render</code> selects a one-based frame for a static renderer. The <a href="./plugin-gif.html">GIF tutorial</a> covers bounded animation export from retained frames. Video codecs are a separate host capability; a timeline value alone does not promise video encoding.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="9" spellcheck="false">CenterCard(center, origin) -&gt; .Paragraph(@&quot;frame @{origin[:ordinal]}; center = @{center}&quot;);
 
 motion := .Timeline.Sequence({=

@@ -10,6 +10,12 @@ a plotted curve remains a graphic, and a report remains a sequence of document
 parts. That lets the CLI, RiX Web, and a notebook choose an appropriate renderer
 without asking your calculation to produce HTML or SVG itself.
 
+Prerequisites: [Collections](collections.html) and [Transforming data](transformations.html).
+For a data report, begin with [Tables and mathematical grids](tables-and-grids.html)
+and then [Documents and slides](documents-and-slides.html). For a visual result,
+begin with [Plots and graphics](plots-and-graphics.html); drawing and interactive
+controls are later choices. The host decides how to render the same value.
+
 ## Output is still a value
 
 Create an output value with a system constructor, bind it like any other value,

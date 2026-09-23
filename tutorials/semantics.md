@@ -10,10 +10,13 @@ RiX has two complementary kinds of meaning. Semantic types and traits describe
 runtime protocols; physical quantities carry enforced dimensions and exact unit
 conversions. Neither requires erasing the underlying exact representation.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
+Prerequisites: [Expressions](expressions.html) and [Functions](functions.html).
+For an exact-mathematics route, begin with [Physical units and quantities](units.html),
+then [Exact generators](exact-generators.html) and [Exact complex numbers](complex-numbers.html).
+For language protocols, begin with [Conversions](conversions.html) and
+[Headers and traits](headers-and-traits.html). The routes are independent.
+
+Read the type question and unit conversion as separate operations on exact values.
 
 ## A worked example
 
@@ -33,10 +36,7 @@ The first result asks a semantic question. The second performs a physical unit
 conversion. Continue through headers and traits for protocol metadata, then use
 the units, exact-generator, and complex-number pages for mathematical meaning.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Change the elapsed seconds and check the converted minutes before changing the semantic test.
 
 :::challenge Semantics, types, and units practice
 Ask whether an exact fraction satisfies the rational semantic type, then create a compatible physical quantity.
@@ -44,6 +44,4 @@ Ask whether an exact fraction satisfies the rational semantic type, then create 
 
 ## Keep going
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Conversions](conversions.html) for semantic types or [Physical units](units.html) for quantities.

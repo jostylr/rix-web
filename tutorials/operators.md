@@ -1,43 +1,41 @@
 ---
-number: 3a
+number: 2a
 title: Operators and precedence
-description: Arithmetic, comparisons, and implicit application.
+description: Group arithmetic, test divisibility, and compare exact values.
 ---
 
-## Orientation
+## Group an expression
 
-Precedence follows the usual mathematical order, while adjacent terms can mean multiplication or callable application. Parentheses are the clearest way to state a grouping.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+Powers run before multiplication, then addition. `2 + 3 * 4 ^ 2` therefore returns `50`. Parentheses let you make a different grouping explicit.
 
 ```rix edu
-2 + 3 * 4 ^ 2 ;
+[2 + 3 * 4 ^ 2, (2 + 3) * 4 ^ 2];
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+The second result is `80`. Change the exponent and predict both results.
 
-## Read the result
+## Ask about a number
 
-Try `3(2 + 1)` for implicit multiplication and define an uppercase function to see adjacent application.
+`%` returns a remainder. Test it against zero with `==` to ask about divisibility. The first answer is true (`1`); the second is false (`_`).
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+```rix edu
+n := 14;
+[n % 7 == 0, n % 3 == 0];
+```
+
+`n := 14` names a value; `n == 14` compares it. Zero itself is truthy, so always make the test explicit in a conditional.
 
 :::challenge Operators and precedence practice
-Define `Double(x)` and compare `Double 3 + 1` with `Double(3 + 1)`.
+Find the result of `(3 + 2) * 4`, then test whether that result is a multiple of five. Expect 20 and true.
 :::
 
-## Keep going
+## Call a function explicitly
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Parentheses make arguments unambiguous. You can explore RiX's adjacent application later, after ordinary calls are comfortable.
+
+```rix edu
+Double(x) -> x * 2;
+[Double(3) + 1, Double(3 + 1)];
+```
+
+The results are 7 and 8. Continue with [Collections and text](collections.html), or read [Define and call](function-basics.html) for more function examples.

@@ -1,7 +1,7 @@
 ---
 number: 8f
 title: Exact Cayley polar form
-description: Store complex magnitude and direction exactly without a transcendental angle.
+description: Represent exact complex direction without a transcendental angle.
 ---
 
 ## Polar form without an angle

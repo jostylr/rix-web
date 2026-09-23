@@ -1,5 +1,5 @@
 ---
-number: 2f
+number: 3e
 title: Capstone: exact inventory
 description: Model a small inventory with arrays, maps, and sets.
 ---
@@ -8,7 +8,7 @@ description: Model a small inventory with arrays, maps, and sets.
 
 A workshop needs to represent stock counts, an ordered pick list, and the distinct part names involved in an order. One collection type could hold all three, but using the collection that matches each question makes the model easier to read.
 
-This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.
+Prerequisites: [Arrays](arrays.html), [Strings and tuples](tuples-and-strings.html), [Maps](maps.html), and [Sets](sets.html). Predict whether the repeated bolt request survives in each collection before running the example.
 
 ## Build the solution
 
@@ -30,7 +30,7 @@ The same business fact appears in three shapes because each answers a different 
 
 Duplicate bolts survive in the array but collapse in the set. That is not data loss: the set is a derived uniqueness index, and the original sequence still preserves frequency and order. The same map could later hold rational package weights or interval-valued estimates without changing its keys.
 
-The important design choice is visible in the notation: collection shape, assignment mode, scope marker, or system boundary communicates an intention that would otherwise have to live in a comment.
+The collection shape states what the program needs to remember: order, a named count, or distinct names.
 
 ## Extend the model
 
@@ -42,6 +42,6 @@ Add nuts to the request, create a new stock map with two fewer nuts, and report 
 
 ## Review questions
 
-- Which values are exact points, and which preserve uncertainty?
-- Which names introduce fresh values, aliases, or outer-scope updates?
-- Where would an assertion or diagnostic make this model safer?
+- Why does `pickList` contain two bolt requests while `requested` contains only one bolt name?
+- Which collection answers the question “how many bolts are in stock” directly?
+- Does the original stock map change when the challenge creates a revised map?

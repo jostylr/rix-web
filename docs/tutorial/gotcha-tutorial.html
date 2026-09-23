@@ -32,7 +32,7 @@ SignedIncoming(3);  ## produces -3, not 3</code></pre></section>
 <p>In RiX, the false arm below is lazy and its <code>{; ... }</code> creates a nested scope. The bare reads of <code>numerator</code> and <code>denominator</code> therefore fail only when that arm is selected:</p>
 <section class="comparison-code"><header>text</header><pre><code>ReducePair = (numerator, denominator) -&gt;
     denominator == 0
-        ?: {: numerator &lt; 0 ?: -1 ?_ 1, 0 }
+        ?: {: numerator == 0 ?: 0 ?_ numerator &lt; 0 ?: -1 ?_ 1, 0 }
         ?_ {;
             common = PairGcd(numerator, denominator);
             {: numerator // common, denominator // common };
@@ -51,7 +51,7 @@ SignedIncoming(3);  ## produces -3, not 3</code></pre></section>
 
 ReducePair = (numerator, denominator) -&gt;
     denominator == 0
-        ?: {: numerator &lt; 0 ?: -1 ?_ 1, 0 }
+        ?: {: numerator == 0 ?: 0 ?_ numerator &lt; 0 ?: -1 ?_ 1, 0 }
         ?_ {;
             common = PairGcd(@numerator, @denominator);
             {: @numerator // common, @denominator // common };
@@ -59,6 +59,16 @@ ReducePair = (numerator, denominator) -&gt;
 
 ReducePair(6, 8);</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p>Notice that <code>common</code> stays bare: it belongs to the current branch block.</p>
+<h3>A multifunction alternative</h3>
+<p>The previous cell defines <code>PairGcd</code>. Keep it, then put the zero-denominator case and the ordinary reduction in separate variants:</p>
+<section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="7" spellcheck="false">ReducePairByVariant(numerator, denominator) ?- [denominator == 0] /ZeroDenominator/ =&gt;
+    {: numerator == 0 ?: 0 ?_ numerator &lt; 0 ?: -1 ?_ 1, 0 };
+
+ReducePairByVariant(numerator, denominator) ?!- [common = PairGcd(numerator, denominator)] /Reduce/ =&gt;
+    {: numerator // common, denominator // common };
+
+[ReducePairByVariant(6, 8), ReducePairByVariant(-5, 0), ReducePairByVariant(0, 0)];</textarea><div class="tutorial-output" data-tutorial-output></div></section>
+<p>The first variant handles a zero denominator before <code>PairGcd</code> runs. In the second, preparation computes <code>common</code> once and makes it available to the body. There is no extra branch block, so <code>numerator</code> and <code>denominator</code> remain local parameter names; no <code>@</code> captures are needed. The strict <code>?!-</code> preparation also makes an unexpected <code>PairGcd</code> error visible. Both versions return <code>( 0, 0 )</code> for a zero numerator and denominator, matching JavaScript&#039;s <code>Math.sign(0)</code>.</p>
 <h2>Gotcha 3: not every name in a loop needs <code>@</code></h2>
 <p>The opposite mistake is to prefix every loop-body name. JavaScript does not force the distinction:</p>
 <section class="comparison-code"><header>javascript</header><pre><code>function weightedSum(values) {

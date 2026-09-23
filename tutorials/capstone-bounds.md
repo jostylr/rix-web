@@ -1,5 +1,5 @@
 ---
-number: 3g
+number: 2f
 title: Capstone: bounds check
 description: Use exact notation, intervals, and safe defaults together.
 ---
@@ -29,7 +29,7 @@ This program separates a point reading, a hole, and explicit null. A point means
 
 Run _ ?| 18:22 and compare it with [,,][1] ?| 18:22. The first remains null; the second selects the range. Preserving that range also avoids false precision: substituting its midpoint would manufacture knowledge that the sensor never supplied.
 
-The important design choice is visible in the notation: collection shape, assignment mode, scope marker, or system boundary communicates an intention that would otherwise have to live in a comment.
+The important distinction is between a missing slot and an explicit null. Only a hole selects the interval fallback.
 
 ## Extend the model
 
@@ -41,6 +41,6 @@ Add lower and upper names, supply an exact reading, and return whether it lies b
 
 ## Review questions
 
-- Which values are exact points, and which preserve uncertainty?
-- Which names introduce fresh values, aliases, or outer-scope updates?
-- Where would an assertion or diagnostic make this model safer?
+- What changes when `reading` is 20 rather than a hole?
+- Why does an explicit `_` remain `_` after hole coalescing?
+- What information would be lost by replacing the interval with its midpoint?

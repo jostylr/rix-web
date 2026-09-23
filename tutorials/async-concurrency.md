@@ -1,5 +1,5 @@
 ---
-number: 7f
+number: 6f
 title: Async and concurrency
 description: Await bounded collection work, stream pipe stages, and start supervised background effects.
 ---

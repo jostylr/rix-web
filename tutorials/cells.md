@@ -1,46 +1,31 @@
 ---
-number: 4a
+number: 7a
 title: Cells and assignment
 description: Aliases, copies, updates, and identity.
 ---
 
-## Orientation
+## See aliasing and copying
 
 Use `=` to alias a cell, `:=` to create a fresh copy, and `~=` to replace a cell's value in place. `===` asks whether two names still share a cell.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
-
 ```rix edu
 x := 5;
-y = x;
+alias = x;
+copy := x;
 x ~= 9;
-x === y ;
+[x, alias, copy, x === alias, x === copy];
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+The first three values are 9, 9 and 5. The identity checks are true and false: `alias` shares `x`'s cell, while `copy` does not. Change the replacement to 12 and check the same pattern.
 
-## Read the result
+## When copying nested data
 
-Deep-copy forms (`::=` and `~~=`) matter when nested collections must not share children.
+For ordinary scalar calculations, `:=` and `=` are enough. Deep-copy forms (`::=` and `~~=`) matter when nested collections must not share children. Learn them when a concrete nested update requires that distinction.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+An in-place update inside a nested function may need an explicit outer reference such as `@balance`. [Scope and imports](scope.html) explains the boundary; [Bounded simulation](capstone-simulation.html) uses one.
 
 :::challenge Cells and assignment practice
 Bind `a`, alias it as `b`, copy it as `c`, update `a`, and inspect both names.
 :::
 
-## Keep going
-
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Destructuring](destructuring.html) when an array or tuple should supply several names.

@@ -1,7 +1,7 @@
 ---
-number: 3d
+number: 2d
 title: Interval generation and sampling
-description: Produce exact point ranges, partitions, mediants, and repeatable random samples.
+description: Produce exact ranges, partitions, mediants, and repeatable samples.
 ---
 
 ## Intervals can produce points or subintervals

@@ -1,7 +1,7 @@
 ---
 number: 8d
-title: Exact generators
-description: Keep pi and algebraic roots exact, define relations, and combine them with units.
+title: Exact constants and algebraic generators
+description: Keep pi and algebraic roots exact through arithmetic.
 ---
 
 ## The Exact collection

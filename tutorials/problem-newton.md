@@ -1,5 +1,5 @@
 ---
-number: 11a
+number: 11c
 title: Newton square root
 description: Approximate a root to a supplied tolerance.
 ---

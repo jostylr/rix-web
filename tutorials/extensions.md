@@ -1,7 +1,7 @@
 ---
 number: 10c
 title: Language extensions
-description: Extend RiX with plugins, capabilities, and delimited custom infix operators.
+description: System loaders, keywords, and custom operators.
 ---
 
 ## Orientation
@@ -10,10 +10,7 @@ RiX extensions use the runtime plugin catalog and capability context. Parser
 syntax remains static except for explicitly declared, delimited custom infix
 operators.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
+This is a host-facing topic. Read the working syntax and the registration boundary together before trying an extension.
 
 ## What works today
 
@@ -57,10 +54,7 @@ Prefer ordinary plugin methods when punctuation does not materially improve the
 notation. Study the custom-operator documentation when a domain benefits from
 dedicated infix syntax.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Keep a registration example next to its host requirement; a browser cell alone cannot grant capabilities.
 
 :::challenge Language extensions practice
 Write a short note describing a domain operation you would expose as a system capability.
@@ -68,6 +62,4 @@ Write a short note describing a domain operation you would expose as a system ca
 
 ## Keep going
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Method extensions](method-extensions.html) for a narrower way to extend behavior.

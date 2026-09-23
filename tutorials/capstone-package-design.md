@@ -8,7 +8,7 @@ description: Design a safe RiX package boundary.
 
 Imagine a package that converts a list of exact prices into taxed prices. Before writing an import header, prototype the pure calculation and identify the smallest capability surface the package needs.
 
-This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.
+Prerequisites: [RiX scripts](rix-scripts.html), [Functions](functions.html), and [Pipes](pipes.html). Predict the first taxed price before running the cell.
 
 ## Build the solution
 
@@ -29,7 +29,7 @@ The runnable cell is host-independent: it accepts values, transforms them, and r
 
 A package interface can name required inputs and exports, then grant only capabilities the implementation actually uses. Adding a JavaScript formatter later becomes a visible trust decision. Exact prices also postpone rounding until presentation or settlement, avoiding order-dependent results from rounding every intermediate amount.
 
-The important design choice is visible in the notation: collection shape, assignment mode, scope marker, or system boundary communicates an intention that would otherwise have to live in a comment.
+The pure calculation needs no host capability beyond the ordinary language operations shown. Any later file or JavaScript dependency should appear in the package interface.
 
 ## Extend the model
 
@@ -41,6 +41,6 @@ Write a short interface design in comments, then add a discount function and com
 
 ## Review questions
 
-- Which values are exact points, and which preserve uncertainty?
-- Which names introduce fresh values, aliases, or outer-scope updates?
-- Where would an assertion or diagnostic make this model safer?
+- What is the exact first taxed price at a rate of `1/20`?
+- Which inputs and outputs should a package interface name?
+- What capability would be required only after adding file or JavaScript integration?

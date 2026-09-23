@@ -8,10 +8,7 @@ description: Host modules and the browser trust boundary.
 
 JavaScript imports cross a host trust boundary. RiX can model module values and calls, but RatCalc deliberately previews rather than executes selected browser modules.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
+JavaScript module execution depends on a trusted host; the browser examples here illustrate the boundary rather than loading a local file.
 
 ## A worked example
 
@@ -28,10 +25,7 @@ is being reused when the expression changes.
 
 This protects a calculator page from silently running code selected from a local file.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Use the source shape to plan a module interface, then run it only in a host that grants that capability.
 
 :::challenge JavaScript modules practice
 Use a RiX map to sketch the data a future JavaScript module would return.
@@ -39,6 +33,4 @@ Use a RiX map to sketch the data a future JavaScript module would return.
 
 ## Keep going
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [RiX scripts](rix-scripts.html) for language-native reusable code.

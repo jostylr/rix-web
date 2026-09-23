@@ -38,6 +38,42 @@ test("every core tutorial source is indexed exactly once", async () => {
     expect(new Set(indexedFiles).size).toBe(indexedFiles.length);
 });
 
+test("core lesson metadata matches the navigation index", async () => {
+    for (const tutorial of tutorials.filter(({ pluginGroup, pluginTutorial }) => !pluginGroup && !pluginTutorial)) {
+        const source = await Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url)).text();
+        const frontmatter = source.match(/^---\n([\s\S]*?)\n---/)?.[1] || "";
+        expect(frontmatter, tutorial.file).toContain(`number: ${tutorial.number}`);
+        expect(frontmatter, tutorial.file).toContain(`title: ${tutorial.title}`);
+        expect(frontmatter, tutorial.file).toContain(`description: ${tutorial.description}`);
+    }
+});
+
+test("the introductory course follows dependencies and starter links resolve", async () => {
+    expect(tutorials.filter(({ parent, pluginGroup, pluginTutorial }) => !parent && !pluginGroup && !pluginTutorial)
+        .slice(0, 7).map(({ file }) => file)).toEqual([
+        "getting-started.html", "expressions.html", "collections.html", "control.html",
+        "functions.html", "transformations.html", "binding.html",
+    ]);
+    expect(tutorialByNumber("2g")?.file).toBe("capstone-exact-recipe.html");
+    expect(tutorialByNumber("7e")?.file).toBe("capstone-simulation.html");
+    expect(tutorialByNumber("11a")?.file).toBe("problem-fizzbuzz.html");
+
+    const source = await Bun.file(new URL("../tutorials/getting-started.md", import.meta.url)).text();
+    const linkedFiles = [...source.matchAll(/\]\(([^)#]+\.html)\)/g)].map((match) => match[1]);
+    expect(linkedFiles.length).toBeGreaterThan(10);
+    for (const file of linkedFiles) {
+        expect(tutorials.some((tutorial) => tutorial.file === file), file).toBe(true);
+    }
+});
+
+test("built starter renders its deeper lesson links as anchors", async () => {
+    const html = await Bun.file(new URL("../docs/tutorial/getting-started.html", import.meta.url)).text();
+    for (const file of ["expressions.html", "operators.html", "function-basics.html", "arrays.html", "pipes.html", "generators.html", "problem-fizzbuzz.html"]) {
+        expect(html, file).toContain(`href="./${file}"`);
+    }
+    expect(html).not.toContain("[Expressions](expressions.html)");
+});
+
 test("tutorial sources use runnable RiX blocks and a challenge", async () => {
     const source = await Bun.file(new URL("../tutorials/getting-started.md", import.meta.url)).text();
     expect(source).toContain("```rix edu");
@@ -180,7 +216,7 @@ test("structural arithmetic has focused notation and parser lessons", async () =
 });
 
 test("method extensions and scoped randomness have focused runnable lessons", async () => {
-    expect(tutorialByNumber("3e")?.file).toBe("scoped-randomness.html");
+    expect(tutorialByNumber("5d")?.file).toBe("scoped-randomness.html");
     expect(tutorialByNumber("10d")?.file).toBe("method-extensions.html");
     const randomness = await Bun.file(new URL("../tutorials/scoped-randomness.md", import.meta.url)).text();
     const methods = await Bun.file(new URL("../tutorials/method-extensions.md", import.meta.url)).text();

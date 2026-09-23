@@ -1,5 +1,5 @@
 ---
-number: 7e
+number: 6e
 title: Capstone: transform a report
 description: Turn a small collection into a derived result.
 ---
@@ -8,7 +8,7 @@ description: Turn a small collection into a derived result.
 
 A short measurement report should discard nonpositive readings, square the remaining values, and preserve exact fractions. Pipes make the sequence of transformations read from left to right.
 
-This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.
+Prerequisites: [Arrays](arrays.html), [Pipes](pipes.html), and [Functions](functions.html). Predict which inputs survive the filter before running the cell.
 
 ## Build the solution
 
@@ -29,7 +29,7 @@ The intermediate names are explanation points. A reader can verify that filterin
 
 Array callbacks receive value, then an optional one-based position, then the source. This report needs only values, so it states one parameter. A position-aware version could retain each measurement's original location. The fractional square also remains exact, making the final reduction an exact summary; decimal formatting belongs at the presentation boundary.
 
-The important design choice is visible in the notation: collection shape, assignment mode, scope marker, or system boundary communicates an intention that would otherwise have to live in a comment.
+The two intermediate names let you inspect selection before transformation. That order preserves the meaning of “positive reading.”
 
 ## Extend the model
 
@@ -41,6 +41,6 @@ Add a reduce step that totals the squared values. Keep the intermediate positive
 
 ## Review questions
 
-- Which values are exact points, and which preserve uncertainty?
-- Which names introduce fresh values, aliases, or outer-scope updates?
-- Where would an assertion or diagnostic make this model safer?
+- Which measurement is removed before squaring, and why?
+- What are the exact squares of `1/2` and `3/2`?
+- What exact total does the added reduction produce?

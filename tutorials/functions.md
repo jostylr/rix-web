@@ -1,44 +1,28 @@
 ---
 number: 5
 title: Functions and scope
-description: Callables, multifunctions, closures, and partials.
+description: Define and call a function, then explore scope and reusable rules.
 ---
 
-## Orientation
+## Name a rule
 
-Uppercase names are callable. RiX supports ordinary functions, lambdas, multifunctions, lexical scope, and partial application without leaving expression syntax.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+An uppercase name can define a callable. The function below takes `x` and returns its square; the call returns 144.
 
 ```rix edu
 Square(x) -> x ^ 2;
-Square(12) ;
+Square(12);
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+Change 12 to 7. A call can be part of a larger expression too: `Square(7) + 1` returns 50.
 
-## Read the result
+## Choose a route
 
-The detail pages explain dispatch and closure behavior before using those features in larger programs.
+Start with [Define and call](function-basics.html), then [Scope and imports](scope.html) for surrounding names. [Multifunctions](multifunctions.html) combines guarded variants and assumes you already know ordinary decisions. [Partial application](partials.html) is an optional way to prefill arguments.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+The [Rule dispatcher](capstone-dispatch.html) capstone belongs after multifunctions. Keep [Cells and assignment](cells.html) nearby when a function needs shared state.
 
 :::challenge Functions and scope practice
-Define a function that returns the area of a rectangle.
+Define `Area(width, height)` to return their product, then call it with 7 and 11. The answer should be 77.
 :::
 
-## Keep going
-
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Transforming data](transformations.html) to use functions on finite arrays.

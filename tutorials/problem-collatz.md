@@ -1,5 +1,5 @@
 ---
-number: 11c
+number: 11b
 title: Collatz test
 description: Test a starting value up to a step limit.
 ---

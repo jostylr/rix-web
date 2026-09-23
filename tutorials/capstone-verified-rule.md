@@ -8,7 +8,7 @@ description: Build a small rule and validate it with system helpers.
 
 A reusable rule should have an example that demonstrates its expected behavior and a diagnostic label that gives failures context. This capstone keeps the arithmetic simple so the verification structure remains visible.
 
-This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.
+Prerequisites: [Decisions](control.html), [Functions](functions.html), and [Diagnostics and tests](diagnostics.html). Predict the result for a negative input before running the cell.
 
 ## Build the solution
 
@@ -25,11 +25,11 @@ The user function contains the domain rule. The next names make the observed and
 
 ## Test properties and boundaries
 
-Examples should cover below the lower bound, exactly at each bound, inside the range, and above the upper bound. Those cases expose reversed comparisons and boundary mistakes that one comfortable example misses.
+For this rule, test a negative input, zero and a positive input. Those cases expose reversed comparisons and boundary mistakes that one comfortable example misses.
 
 Diagnostics live at the system boundary because reporting, tracing, and stopping are capabilities rather than arithmetic. The visible system call makes that authority apparent. Keeping the rule pure and its expectations nearby lets the same logic run in a calculator, script, or package while preserving a readable contract.
 
-The important design choice is visible in the notation: collection shape, assignment mode, scope marker, or system boundary communicates an intention that would otherwise have to live in a comment.
+Keep the decision rule pure and test its outputs separately. A diagnostic can then report a failed expectation with the input that caused it.
 
 ## Extend the model
 
@@ -41,6 +41,6 @@ Add three cases—negative, zero, and positive—and return a map from case labe
 
 ## Review questions
 
-- Which values are exact points, and which preserve uncertainty?
-- Which names introduce fresh values, aliases, or outer-scope updates?
-- Where would an assertion or diagnostic make this model safer?
+- What should `ClampPositive(0)` and `ClampPositive(4)` return?
+- Why is one negative case insufficient to verify the rule?
+- Where would a diagnostic label help identify a failing input?

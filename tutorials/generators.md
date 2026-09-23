@@ -1,43 +1,42 @@
 ---
-number: 7b
+number: 6b
 title: Generators
-description: Build and filter generated sequences.
+description: Build a finite array from a starting value, step, and count.
 ---
 
-## Orientation
+## Make a finite array
 
-Generator syntax creates a sequence from a compact pattern, then composes naturally with filters and pipes. Keep a stopping condition or limit visible.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+`[1 |+ 2 |; 5]` begins at 1, adds 2 each time, and returns five values. The starting value counts. `|;` produces the finished array immediately.
 
 ```rix edu
-[1 |+ 2 |^ 5] ;
+[1 |+ 2 |; 5];
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+The result is `[1, 3, 5, 7, 9]`. Change the step to 3, then predict all five values before running it.
 
-## Read the result
+## Use a named count
 
-Generated values are a good fit for exact progressions and small mathematical investigations.
+You can choose the count elsewhere in a program. An array is one-based, so the fourth item of this four-value result is 7.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+```rix edu
+count := 4;
+values := [1 |+ 2 |; count];
+values[4];
+```
+
+Set a finite count deliberately: a generator without a bound may continue producing values until the caller stops asking for them. For mapping or filtering an array, see [Pipes](pipes.html).
 
 :::challenge Generators practice
-Create a generator whose values grow by three, then inspect its first few terms.
+Generate five values beginning at 2 and increasing by 3. Return the fifth item. It should be 14.
 :::
 
-## Keep going
+## When values should be lazy
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Replacing `|;` with `|^` creates a lazy sequence with a known length. It shows a sequence description until you ask for an item.
+
+```rix edu
+later := [1 |+ 2 |^ 5];
+later[5];
+```
+
+The requested fifth value is still 9. [Lazy generators](lazy-generators.html) explains when and how to inspect them safely. Continue to [Pipes](pipes.html) to transform a finite result.

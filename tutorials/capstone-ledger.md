@@ -1,5 +1,5 @@
 ---
-number: 4d
+number: 7d
 title: Capstone: shared ledger
 description: Use cells, destructuring, and updates in a small model.
 ---
@@ -8,7 +8,7 @@ description: Use cells, destructuring, and updates in a small model.
 
 A tiny ledger entry contains an account and an amount. A live balance and a display binding should intentionally share updates, while an archived value should remain independent. This is a compact demonstration of why RiX has several assignment forms.
 
-This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.
+Prerequisites: [Cells and assignment](cells.html), [Destructuring](destructuring.html), and [Maps](maps.html). Predict the displayed and archived balances before running the cell.
 
 ## Build the solution
 
@@ -32,7 +32,7 @@ When the snapshot is created, it prints the same number as the live balance, yet
 
 Destructuring gives the transaction a readable boundary instead of scattering positional lookups through the update. Inspect alias, snapshot, and balance individually after running the cell. Their differing behavior makes RiX identity observable even when two printed values began equal.
 
-The important design choice is visible in the notation: collection shape, assignment mode, scope marker, or system boundary communicates an intention that would otherwise have to live in a comment.
+The choice between `=` and `:=` is the point of this model: one name follows the live balance, while the other preserves an earlier value.
 
 ## Extend the model
 
@@ -44,6 +44,6 @@ Add a second transaction and a second archive. Predict all four values before ru
 
 ## Review questions
 
-- Which values are exact points, and which preserve uncertainty?
-- Which names introduce fresh values, aliases, or outer-scope updates?
-- Where would an assertion or diagnostic make this model safer?
+- What are `display` and `archive` after the half-unit update?
+- Which assignment made `display` share the balance's cell?
+- What changes if the archive uses `=` instead of `:=`?

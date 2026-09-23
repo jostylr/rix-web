@@ -1,5 +1,5 @@
 ---
-number: 7g
+number: 6g
 title: Async streams
 description: Build lazy pull pipelines, consume them explicitly, and project event streams into reactive state.
 ---

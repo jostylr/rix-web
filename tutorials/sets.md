@@ -1,7 +1,7 @@
 ---
-number: 2c
+number: 3d
 title: Sets
-description: Keep unique values and combine groups with precise set operations.
+description: Unique values and set algebra.
 ---
 
 ## Keep only one of each value

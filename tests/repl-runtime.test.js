@@ -32,6 +32,110 @@ area`), options);
     expect(context.getAllNames()).toContain("area");
 });
 
+test("getting started builds a complete finite FizzBuzz result from fresh state", async () => {
+    const source = await Bun.file(new URL("../tutorials/getting-started.md", import.meta.url)).text();
+    const completeSection = source.split(/^## Run the complete program\n/m)[1];
+    const program = completeSection?.match(/```rix edu\n([\s\S]*?)\n```/)?.[1];
+    expect(program).toBeTruthy();
+
+    const repl = createRixRepl({ autoLoadPlugins: false });
+    try {
+        const first = await repl.runAsync(program);
+        expect(first.type).toBe("result");
+        expect(first.text).toBe("[1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, FizzBuzz]");
+        expect((await repl.runAsync("[FizzBuzz(2), FizzBuzz(3), FizzBuzz(5), FizzBuzz(15)];")).text)
+            .toBe("[2, Fizz, Buzz, FizzBuzz]");
+    } finally {
+        await repl.dispose();
+    }
+
+    const extended = createRixRepl({ autoLoadPlugins: false });
+    try {
+        const response = await extended.runAsync(program.replace("limit := 15;", "limit := 30;"));
+        expect(response.type).toBe("result");
+        const values = response.text.slice(1, -1).split(", ");
+        expect(values).toHaveLength(30);
+        expect(values[14]).toBe("FizzBuzz");
+        expect(values[29]).toBe("FizzBuzz");
+        expect(values.slice(-3)).toEqual(["28", "29", "FizzBuzz"]);
+    } finally {
+        await extended.dispose();
+    }
+});
+
+test("FizzBuzz variants match the introductory program across two full cycles", async () => {
+    const source = await Bun.file(new URL("../tutorials/problem-fizzbuzz.md", import.meta.url)).text();
+    const programs = ["RiX", "RiX with a multifunction"].map((heading) => {
+        const section = source.split(new RegExp(`^## ${heading}\\n`, "m"))[1];
+        return section?.match(/```rix edu\n([\s\S]*?)\n```/)?.[1];
+    });
+    expect(programs.every(Boolean)).toBe(true);
+
+    const outputs = [];
+    for (const program of programs) {
+        const repl = createRixRepl({ autoLoadPlugins: false });
+        try {
+            expect((await repl.runAsync(program)).type).toBe("result");
+            const result = await repl.runAsync("[1 |+ 1 |; 30] |>> (n) -> FizzBuzz(n);");
+            expect(result.type).toBe("result");
+            outputs.push(result.text);
+        } finally {
+            await repl.dispose();
+        }
+    }
+    expect(outputs[1]).toBe(outputs[0]);
+    expect(outputs[1].split(", ")[14]).toBe("FizzBuzz");
+    expect(outputs[1].split(", ")[29]).toBe("FizzBuzz]");
+});
+
+test("fraction reduction variants agree for ordinary and zero-denominator inputs", async () => {
+    const source = await Bun.file(new URL("../tutorials/gotcha-tutorial.md", import.meta.url)).text();
+    const section = source.split(/^## Gotcha 2:[^\n]*\n/m)[1]?.split(/^## Gotcha 3:/m)[0];
+    const programs = [...section.matchAll(/```rix edu\n([\s\S]*?)\n```/g)].map((match) => match[1]);
+    expect(programs).toHaveLength(2);
+
+    const repl = createRixRepl({ autoLoadPlugins: false });
+    try {
+        for (const program of programs) {
+            expect((await repl.runAsync(program)).type).toBe("result");
+        }
+        for (const [numerator, denominator] of [[6, 8], [-6, 8], [0, 8], [5, 0], [-5, 0], [0, 0]]) {
+            const original = await repl.runAsync(`ReducePair(${numerator}, ${denominator});`);
+            const variant = await repl.runAsync(`ReducePairByVariant(${numerator}, ${denominator});`);
+            expect(variant.type).toBe("result");
+            expect(variant.text).toBe(original.text);
+        }
+        expect((await repl.runAsync("ReducePairByVariant(0, 0);")).text).toBe("( 0, 0 )");
+    } finally {
+        await repl.dispose();
+    }
+});
+
+test("introductory hole and recipe examples preserve their intended meaning", async () => {
+    for (const [file, expected] of [
+        ["holes.md", "[99, _]"],
+        ["capstone-exact-recipe.md", "[3..3/8, 1..1/2:1..11/16]"],
+    ]) {
+        const source = await Bun.file(new URL(`../tutorials/${file}`, import.meta.url)).text();
+        const code = source.match(/```rix edu\n([\s\S]*?)\n```/)?.[1];
+        expect(code, file).toBeTruthy();
+        const repl = createRixRepl({ autoLoadPlugins: false });
+        try {
+            const result = await repl.runAsync(code);
+            expect(result.type, file).toBe("result");
+            expect(result.text, file).toBe(expected);
+        } finally {
+            await repl.dispose();
+        }
+    }
+    const repl = createRixRepl({ autoLoadPlugins: false });
+    try {
+        expect((await repl.runAsync("[1][2] ?| 99;")).text).toBe("_");
+    } finally {
+        await repl.dispose();
+    }
+});
+
 test("the web REPL automatically presents refinable function results as certified decimal balls", () => {
     const repl = createRixRepl({
         pluginProfile: {

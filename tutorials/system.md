@@ -8,10 +8,14 @@ description: Capabilities, assertions, and diagnostics.
 
 The dot system object exposes deliberately granted capabilities. Assertions, symbolic specifications, diagnostics, and tests use that same explicit system boundary.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
+Prerequisites: [Functions](functions.html) and [Decisions](control.html).
+For a program-checking route, start with [System capabilities](system-context.html)
+and [Diagnostics and tests](diagnostics.html). For symbolic mathematics, start
+with [Assertions and symbolic specs](assertions-and-symbols.html), then
+[Exact symbolic calculus](symbolic-calculus.html). The advanced notation pages
+can be read as references when a task needs them.
+
+Compare the dot call with ordinary arithmetic so the capability boundary has a concrete example.
 
 ## A worked example
 
@@ -27,10 +31,7 @@ is being reused when the expression changes.
 
 The advanced pages show how to ask the runtime for more without making hidden global functions.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Change the two input numbers and verify the result before moving to symbolic or diagnostic work.
 
 :::challenge System and symbolic work practice
 Use a dot capability to compute an arithmetic result.
@@ -38,6 +39,4 @@ Use a dot capability to compute an arithmetic result.
 
 ## Keep going
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [System capabilities](system-context.html) and then choose a diagnostic or symbolic route.

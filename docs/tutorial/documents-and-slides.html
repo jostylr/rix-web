@@ -89,7 +89,7 @@ image: @{diagram} {mime=image/svg+xml, alt=&quot;A proof diagram&quot;, width=32
 }) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>
 <p><code>Image</code>, <code>Audio</code>, and <code>Video</code> wrap an <code>.Asset</code> reference rather than pretending that a vector <code>.Graphic</code> is a photograph or media file. Image alternative text is required; audio and video retain an optional transcript that export hosts can require. Asset resolution stays with the host, so a RiX record never opens a file or fetches a URL by itself.</p>
 <h2>Wrap a graphic as a figure</h2>
-<p>Figures are not limited to tables. This creates a small plot, then gives it a caption and a stable label for document cross references. The [document plugin tutorial](plugin-document.html) connects these records to publication planning; renderer tutorials cover HTML, LaTeX and other exports.</p>
+<p>Figures are not limited to tables. This creates a small plot, then gives it a caption and a stable label for document cross references. The <a href="./plugin-document.html">document plugin tutorial</a> connects these records to publication planning; renderer tutorials cover HTML, LaTeX and other exports.</p>
 <section class="tutorial-cell"><header><span>Runnable RiX</span><button type="button" data-tutorial-run>Run cell</button></header><textarea class="tutorial-source" data-tutorial-source rows="5" spellcheck="false">.Plugin.Load(&quot;plot&quot;);
 curve := .plot.Polynomial([1, -2, -1], [-1, 4]);
 .Figure(curve, &quot;Graph of x squared minus 2x minus 1&quot;, &quot;fig:curve&quot;) ;</textarea><div class="tutorial-output" data-tutorial-output></div></section>

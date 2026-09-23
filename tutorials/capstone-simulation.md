@@ -1,5 +1,5 @@
 ---
-number: 6d
+number: 7e
 title: Capstone: bounded simulation
 description: Use branches, blocks, and loops to model a process.
 ---
@@ -8,9 +8,11 @@ description: Use branches, blocks, and loops to model a process.
 
 A savings simulation starts with an exact balance and applies a fixed contribution four times. A loop is appropriate because the same state transition repeats and the stopping condition is known.
 
-This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.
+Prerequisites: [Cells and assignment](cells.html) for updates, [Scope and imports](scope.html) for `@balance`, and the block introduction in [Brace containers](brace-containers.html). Predict the balance after one contribution before running the loop.
 
 ## Build the solution
+
+In `{@ i = 0; i < 4; body }`, `i = 0` initializes a loop-local counter, `i < 4` checks the stopping bound before each pass, and the block is the body. Inside it, `@balance += 3 / 4` updates the balance in the surrounding scope and `i += 1` advances the counter. Together they guarantee four passes.
 
 ```rix edu
 balance := 5 / 2;
@@ -28,7 +30,7 @@ A simulation is easier to trust when these concerns remain visible. State is the
 
 Run one transition before the complete simulation and check both branches, especially their boundary. Then alter the budget and look for convergence or oscillation. Because values remain exact, fractional updates do not accumulate binary rounding noise; an interval state could likewise produce exact bounds on the outcome.
 
-The important design choice is visible in the notation: collection shape, assignment mode, scope marker, or system boundary communicates an intention that would otherwise have to live in a comment.
+The explicit bound matters: without the counter update, this loop would never satisfy its stopping condition. The `@` prefix makes the outer balance update visible.
 
 ## Extend the model
 
@@ -40,6 +42,6 @@ Add a ternary inside the loop that contributes 1 on even iterations and 1/2 on o
 
 ## Review questions
 
-- Which values are exact points, and which preserve uncertainty?
-- Which names introduce fresh values, aliases, or outer-scope updates?
-- Where would an assertion or diagnostic make this model safer?
+- What is the final balance after four contributions, and how does it change after five?
+- Why does `@balance` refer to a different scope than `i`?
+- Which update enforces the loop's four-pass bound?

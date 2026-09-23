@@ -1,5 +1,5 @@
 ---
-number: 3e
+number: 5d
 title: Scoped reproducible randomness
 description: Reset, inherit, and locally replace deterministic random streams.
 ---

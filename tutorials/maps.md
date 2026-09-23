@@ -1,7 +1,7 @@
 ---
-number: 2b
+number: 3c
 title: Maps
-description: Use named entries when a collection reads more like a compact record.
+description: Named entries and record-like data.
 ---
 
 ## Give values a name
@@ -34,12 +34,11 @@ Like array methods, ordinary map methods return a new value. `Set`, `Remove`, `M
 
 ```rix edu
 base := {= flour=3 / 2, water=1 };
-scaled := base |>> (amount, ingredient) -> amount * 2;
-finished := scaled.Set("salt", 1 / 20);
-{: base, finished } ;
+finished := base.Set("salt", 1 / 20);
+{: base, finished };
 ```
 
-The map form of the mapping pipe preserves the existing keys and transforms only values. Its callback receives value first and key second. That same receiver-first convention is used throughout collection traversal, although the locator changes shape: an array supplies a one-based position and a map supplies its key.
+`base` remains unchanged; `finished` has one more key. The tuple displays both records side by side. Once you have read [Pipes](pipes.html), you can map a map's values with `|>>`; the callback receives value first and key second, and the map keeps its keys.
 
 Use `Merge` when an entire patch map is already available, and `Update` when the replacement depends on the existing value. Their bang forms mutate a deliberately mutable receiver; the non-bang forms are easier to reason about in tutorial and calculation work.
 

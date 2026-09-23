@@ -1,44 +1,37 @@
 ---
 number: 5a
 title: Define and call
-description: Functions, lambdas, rest parameters, and spread.
+description: Define, call, and pass a simple function.
 ---
 
-## Orientation
+## Define a reusable calculation
 
-A function definition names parameters and an expression body. Lambdas use the same arrow form without a name; rest parameters and spreads handle variable arity.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+A function takes inputs called parameters and returns the value of its body. Uppercase names can name callables. `Add(3, 4)` passes two arguments and returns `7`.
 
 ```rix edu
 Add(x, y) -> x + y;
-Add(3, 4) ;
+Add(3, 4);
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+The same function also works with exact fractions.
 
-## Read the result
+```rix edu
+Add(x, y) -> x + y;
+Add(1 / 3, 1 / 6);
+```
 
-Lowercase names are values, while uppercase names can consume adjacent arguments as callable application.
+The result is `1/2`. Each level-two topic starts fresh, so this cell includes its own definition. Change either argument and rerun.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+## Use a short anonymous function
+
+`(x) -> x * 2` describes the same rule without naming it. A map pipe applies the rule once to each array item.
+
+```rix edu
+[1, 2, 3] |>> (x) -> x * 2;
+```
+
+The result is `[2, 4, 6]`. See [Pipes](pipes.html) for that traversal. [Scope and imports](scope.html) explains how nested functions see surrounding names; [Multifunctions](multifunctions.html) and [Partial application](partials.html) are later options.
 
 :::challenge Define and call practice
-Define `Scale(value, factor)` and call it with two exact fractions.
+Define `Scale(value, factor)` to multiply its arguments, then call it with `3/2` and `2/3`. The result should be 1.
 :::
-
-## Keep going
-
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.

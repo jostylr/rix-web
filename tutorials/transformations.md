@@ -1,43 +1,30 @@
 ---
-number: 7
+number: 6
 title: Transforming data
-description: Pipes, generators, regexes, and embedded values.
+description: Build finite inputs, then map and filter their values.
 ---
 
-## Orientation
+## Make and transform an array
 
-Pipes transform a value through a readable series of operations. Generators create sequences, while regexes and strings add pattern-based transformation.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+At this point you know arrays and functions. A generator can make a finite input array; a map pipe transforms each item. This returns `[1, 4, 9, 16]`.
 
 ```rix edu
-[1, 2, 3] |>> (x) -> x ^ 2 ;
+numbers := [1 |+ 1 |; 4];
+numbers |>> (x) -> x ^ 2;
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+## Keep only useful results
 
-## Read the result
+Filter runs a predicate for each value. The cell below returns `[3, 4]`.
 
-Details cover callback locator/source parameters and the difference between mapping, filtering, and reducing.
+```rix edu
+[1 |+ 1 |; 4] |>? (x) -> x > 2;
+```
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+See [Pipes](pipes.html) for mapping, filtering and reducing, then [Generators](generators.html) for finite patterns. Regex and strings, lazy generators, async concurrency and streams are optional continuations once ordinary finite transformations are comfortable.
 
 :::challenge Transforming data practice
-Map an array of three values to their doubles.
+Generate the numbers 1 through 5, filter to keep those greater than 2, then double them. Expect `[6, 8, 10]`.
 :::
 
-## Keep going
-
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Cells, shared state and patterns](binding.html) to learn when values should be updated deliberately, or practice [Transform a report](capstone-report.html).

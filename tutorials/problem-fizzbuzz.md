@@ -1,5 +1,5 @@
 ---
-number: 11b
+number: 11a
 title: FizzBuzz
 description: Separate branching rules from iteration.
 ---
@@ -7,6 +7,8 @@ description: Separate branching rules from iteration.
 ## The problem
 
 For integers one through a limit, replace multiples of three with “Fizz,” multiples of five with “Buzz,” and multiples of both with “FizzBuzz.” Other values remain numbers.
+
+If this is your first RiX program, build the rule step by step in [Getting started](getting-started.html) before comparing languages here. This page revisits the finished solution; its first three listings are landmarks for readers who know those languages.
 
 ## JavaScript
 
@@ -53,16 +55,31 @@ FizzBuzz(n) ->
     n % 5 == 0 ?: "Buzz" ?_
     n;
 
-[1, |+1, |; 15] |>> (n) -> FizzBuzz(n) ;
+[1 |+ 1 |; 15] |>> (n) -> FizzBuzz(n);
 ```
 
 ## Reading the RiX solution
 
 The function contains the rules; the final line contains the traversal. Testing divisibility by fifteen first handles the overlap before either more general rule matches. Each conditional produces a value, so the whole function is one expression.
 
-The bracket form is RiX's supported eager arithmetic generator: start at one, add one, and make fifteen values. The map pipe applies FizzBuzz to every generated value and returns the transformed array. Because RiX collections may contain mixed values, unmatched numbers can remain numbers.
+The bracket form is RiX's eager arithmetic generator: start at one, add one, and make fifteen values. The seed counts as the first value. The map pipe applies FizzBuzz to every generated value and returns the transformed array. Because RiX collections may contain mixed values, unmatched numbers can remain numbers.
 
 Change the start, step, and count independently. Those pieces describe a sequence rather than managing a loop counter, leaving the final line focused on the values being transformed.
+
+## RiX with a multifunction
+
+Once you know how functions and conditions work, the same rule can be written as ordered variants. Each `?-` preparation checks whether its variant applies. A false check tries the next variant; the final variant handles every remaining number.
+
+```rix edu
+FizzBuzz(n) ?- [n % 15 == 0] /Both/ => "FizzBuzz";
+FizzBuzz(n) ?- [n % 3 == 0] /Three/ => "Fizz";
+FizzBuzz(n) ?- [n % 5 == 0] /Five/ => "Buzz";
+FizzBuzz(n) /Number/ => n;
+
+[1 |+ 1 |; 15] |>> (n) -> FizzBuzz(n);
+```
+
+The order matters: fifteen must be checked before three and five. This form is useful when each rule deserves its own named branch. See [Multifunctions](multifunctions.html) for dispatch details, including what happens when a guard is undecided.
 
 :::challenge Configurable words
 Define ReplaceMultiples(n, divisor, word), then build a variant for multiples of two and seven.

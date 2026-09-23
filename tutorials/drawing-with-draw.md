@@ -1,7 +1,7 @@
 ---
 number: 12d
 title: Drawing with .Graphics
-description: Build intrinsic portable scenes from paths, shapes, groups, transforms, and clips.
+description: Build portable scenes from paths, shapes, groups, transforms, and clips.
 ---
 
 `.Graphics` is RiX's intrinsic, renderer-facing vocabulary for two-dimensional

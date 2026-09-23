@@ -1,5 +1,7 @@
 ---
+number: 8d1
 title: Core mathematical expressions
+description: Construct mathematical expressions without loading a plugin.
 ---
 
 ## Expressions without a plugin

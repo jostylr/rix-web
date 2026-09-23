@@ -1,44 +1,28 @@
 ---
-number: 3f
+number: 2e
 title: Nulls and holes
 description: Undefined values, defaults, and coalescing.
 ---
 
-## Orientation
+## Distinguish an unfilled slot from null
 
 A hole means a missing value; it is distinct from the explicit null value `_`. Hole coalescing gives a fallback without treating every false-like value as absent.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+An empty position inside an array is a hole. `?|` supplies a value only for a hole. The first result below is 99, while an explicit `_` stays `_`.
 
 ```rix edu
-values := [1];
-values[2] ?| 99 ;
+values := [1,,3];
+[values[2] ?| 99, _ ?| 99];
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+Do not confuse an unfilled existing slot with an out-of-range lookup: `values[4]` evaluates to `_`, so hole coalescing does not replace it. Compare the two yourself before relying on a default.
 
-## Read the result
+## Use a fallback deliberately
 
-Holes are useful in partial collections, optional call arguments, and soft matching.
-
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Holes are useful in partially filled data, optional call arguments and soft matching. A fallback should mean “no value was supplied,” not “the supplied value looks false.” [Capstone: bounds check](capstone-bounds.html) applies that rule to a sensor reading.
 
 :::challenge Nulls and holes practice
-Use `?|` to supply a default for a missing map or array lookup.
+Create an array with an unfilled second slot and use `?|` to replace that slot with 42. Check that an explicit `_` is left alone.
 :::
 
-## Keep going
-
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Capstone: bounds check](capstone-bounds.html) or return to [Collections](collections.html).

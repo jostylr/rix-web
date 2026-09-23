@@ -1,44 +1,35 @@
 ---
-number: 2d
-title: Tuples and strings
-description: Positional data and textual values.
+number: 3b
+title: Strings and tuples
+description: Work with text and small groups of positional values.
 ---
 
-## Orientation
+## Read a text value
 
-Tuples are fixed positional groups; strings are ordinary values with indexes and methods. Use a tuple when position has meaning and a map when a key has meaning.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+Quotation marks make text. Like arrays, RiX strings use one-based indexes. A negative index counts back from the end.
 
 ```rix edu
-pair := ( 3, 5 );
-pair[2] ;
+word := "Fizz";
+[word[1], word[-1]];
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+The result contains `F` and `z`. These are text values even though the display omits quotation marks. Try a different word and predict its first and last characters.
 
-## Read the result
+## Group positions
 
-Compare a tuple with a two-entry map, then index a string from the end.
+Use a tuple when the first and second positions have specific meanings. The `{: ... }` form makes those positions visible; the second value below is 5.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+```rix edu
+pair := {: 3, 5 };
+pair[2];
+```
 
-:::challenge Tuples and strings practice
-Create a tuple of three exact measurements and return its last value.
+An array is better for a sequence of interchangeable items. A [map](maps.html) is better when names such as `x` and `y` should label the values.
+
+:::challenge Read two positions
+Make a tuple with the exact measurements 1/2, 3/4 and 5/4. Return its last value using index 3. Then make a short text value and return its first character.
 :::
 
 ## Keep going
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Maps](maps.html) for named entries or [Arrays](arrays.html) for longer ordered collections.

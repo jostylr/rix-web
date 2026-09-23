@@ -1,5 +1,5 @@
 ---
-number: 5e
+number: 5f
 title: Capstone: rule dispatcher
 description: Compose functions, scope, and variants into one task.
 ---
@@ -8,7 +8,7 @@ description: Compose functions, scope, and variants into one task.
 
 A pricing rule gives a small discount to positive quantities, rejects zero with a distinct result, and converts a negative quantity to its magnitude before pricing. Multifunction variants let each condition remain close to the expression it selects.
 
-This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.
+Prerequisites: [Define and call](function-basics.html), basic [Ternaries and cases](ternaries.html), and [Multifunctions](multifunctions.html). Predict the positive, zero and negative results before running the example.
 
 ## Build the solution
 
@@ -29,7 +29,7 @@ The prepared variants state when a pricing policy applies; their bodies state wh
 
 The recursive fallback terminates because negating a negative quantity produces a positive one, which the first variant accepts. Test Price(-5) beside Price(5) to verify the normalization. A bulk-discount variant then becomes an explicit ordering decision instead of another deeply nested conditional.
 
-The important design choice is visible in the notation: collection shape, assignment mode, scope marker, or system boundary communicates an intention that would otherwise have to live in a comment.
+Prepared variants express a policy table. This is a case where guarded dispatch helps: each accepted input family has its own rule.
 
 ## Extend the model
 
@@ -41,6 +41,6 @@ Add a first variant for quantities greater than 20 with a larger discount, then 
 
 ## Review questions
 
-- Which values are exact points, and which preserve uncertainty?
-- Which names introduce fresh values, aliases, or outer-scope updates?
-- Where would an assertion or diagnostic make this model safer?
+- What does `Price(0)` return, and why does it not reach the fallback?
+- Why does `Price(-5)` eventually terminate?
+- What happens if the catch-all variant is moved before the positive and zero variants?

@@ -1,44 +1,39 @@
 ---
-number: 3
-title: Expressions and exact notation
-description: Operators, exact numbers, intervals, and holes.
+number: 2
+title: Expressions and exact values
+description: Calculate and compare exact values before exploring advanced notation.
 ---
 
-## Orientation
+## Calculate exactly
 
-RiX expressions stay exact by default. Arithmetic, intervals, collections, and calls all compose into values you can bind, inspect, and transform.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+An expression produces a value. Integer division keeps a rational answer instead of silently rounding it. `third + third + third` is exactly `1`.
 
 ```rix edu
 third := 1 / 3;
-third + third + third ;
+third + third + third;
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+Use parentheses to choose a grouping. The second value below is `20`, while the first is `14`.
 
-## Read the result
+```rix edu
+[2 + 3 * 4, (2 + 3) * 4];
+```
 
-Use the detail pages to learn which symbols build an expression and how missing values behave.
+## Compare values
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+The remainder `%` lets you ask about divisibility. `==` compares values; `:=` binds a fresh name. The result below is `[1, _]`, meaning true and false/null here.
 
-:::challenge Expressions and exact notation practice
-Write an expression that combines a fraction, an interval, and a comparison.
+```rix edu
+value := 12;
+[value % 3 == 0, value % 5 == 0];
+```
+
+Zero is truthy in RiX, so write the full comparison rather than using a bare remainder as a condition. [Operators and precedence](operators.html) develops these rules.
+
+:::challenge Check a multiple
+Bind `value` to 15, then return a comparison that is true exactly when it is divisible by five. Try 16 as well; the answers should differ.
 :::
 
-## Keep going
+## Continue by goal
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Read [Number notation](number-notation.html) for mixed and repeating numbers; [Intervals](intervals.html) for exact bounds; [Nulls and holes](holes.html) for missing values. [Recipe scaling](capstone-exact-recipe.html) combines exact fractions and bounds. Continue the short beginner route with [Collections and text](collections.html).

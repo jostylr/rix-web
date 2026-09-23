@@ -1,7 +1,7 @@
 ---
-number: 2a
+number: 3a
 title: Arrays
-description: Work with ordered values using RiX's exact, one-based arrays.
+description: Ordered values, one-based indexes, and immutable updates.
 ---
 
 ## Make an ordered list
@@ -47,7 +47,7 @@ evenSquares := squares |>? (value) -> value % 2 == 0;
 evenSquares ;
 ```
 
-The callback can also receive a one-based locator and the source collection. That makes position-aware transformations possible without manually maintaining a counter. Use the function chips below as the compact API index; each opens help with a signature and runnable example.
+This is an optional preview of [Pipes](pipes.html): `|>>` maps each value and `|>?` filters by a condition. The callback `(value) -> ...` describes one item's transformation. It can also receive a one-based position and the source collection when needed. Use the function chips below for method signatures and further examples.
 
 :::challenge Add then select
 Create an array called `measurements` with 1/2 and 3/4. Use `Push` to add 5/4, then return the third item.

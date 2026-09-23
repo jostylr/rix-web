@@ -1,10 +1,20 @@
 ---
-number: 3b
+number: 2b
 title: Number notation
-description: Every built-in exact, certified, interval, base, and output notation.
+description: Common exact inputs, then repeating decimals, bases, intervals, and output forms.
 ---
 
-## Orientation
+## Begin with common exact inputs
+
+Ordinary integers, finite decimals and fractions are exact by default. A colon makes an interval with exact endpoints. This short path is enough before [Intervals](intervals.html) and [Recipe scaling](capstone-exact-recipe.html).
+
+```rix edu
+[12, 1 / 3, 0.125, 2:3];
+```
+
+The rest of this page is a reference tour of additional spellings. You can return to it when a calculation needs a repeating decimal, another base, a certified prefix or a display format.
+
+## Notation tour
 
 RiX distinguishes exact values, certified uncertain scalars, and interval
 collections. Its number syntax covers integers, rational division, finite and
@@ -12,10 +22,7 @@ repeating decimals, mixed numbers, radix shifts, continued fractions, exact
 intervals, certified prefixes, and bases without passing through floating
 point.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
+Predict the type and exact value of each input form before looking at its display.
 
 ## A worked example
 
@@ -401,10 +408,7 @@ intentional exception: RiX uses `_>` mode `"_^"` because `E` notation is not a
 RiX number syntax. `_>` covers the common parseable styles; receiver maps cover
 period metadata, alternate continued fractions, interval spellings, and locale.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Choose one unfamiliar spelling and compare it with an ordinary rational expression for the same value.
 
 :::challenge Number notation practice
 Create one exact repeating decimal and one certified decimal prefix. Compare
@@ -414,6 +418,4 @@ case explicitly.
 
 ## Keep going
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Intervals](intervals.html) or [Recipe scaling](capstone-exact-recipe.html) for an exact calculation.

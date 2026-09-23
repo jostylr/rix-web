@@ -1,43 +1,41 @@
 ---
-number: 7a
+number: 6a
 title: Pipes
-description: Map, filter, reduce, and callback context.
+description: Map, filter, and combine values with short callbacks.
 ---
 
-## Orientation
+## Map every item
 
-A plain pipe feeds a value into a callable. Collection pipes map, filter, reduce, reverse, sort, and quantify while preserving the collection shape when possible.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+`|>>` applies a function to each array value and returns an array of results. The callback's first parameter receives one value at a time.
 
 ```rix edu
-[1, 2, 3] |>> (x) -> x * 2 ;
+[1, 2, 3] |>> (x) -> x * 2;
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+The result is `[2, 4, 6]`. Try `x ^ 2` instead and predict the new array.
 
-## Read the result
+## Filter by a condition
 
-Callback parameters can receive the value, its locator, and its source collection.
+`|>?` keeps values whose predicate succeeds. This example keeps 2 and 4. Write `% 2 == 0` explicitly: zero alone is truthy in RiX.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+```rix edu
+[1, 2, 3, 4] |>? (x) -> x % 2 == 0;
+```
+
+## Combine a finite array
+
+`|>:` reduces the array with a function of the accumulated value and the next value. It starts with the first item, so the sum below is 10.
+
+```rix edu
+[1, 2, 3, 4] |>: (total, value) -> total + value;
+```
+
+For an empty collection, use an explicit initial value or choose another operation. Callback forms can also receive a one-based index and the original source when needed; [Arrays](arrays.html) provides a position-aware example. Start with one value parameter until the other context has a purpose.
 
 :::challenge Pipes practice
-Filter an array to retain values greater than 2.
+Filter `[1, 2, 3, 4]` to retain values greater than 2, then map those values to their doubles. Expect `[6, 8]`.
 :::
 
 ## Keep going
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Use [Generators](generators.html) to make a finite input array and [Transform a report](capstone-report.html) to combine map and filter in a task. Lazy and async pipelines have separate advanced lessons.

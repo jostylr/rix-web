@@ -8,6 +8,11 @@ description: See how RiX syntax reaches named operations and capability owners.
 
 RiX lets ordinary expression syntax stay pleasant to read while keeping a
 named core surface available to programs, tools, and language experiments.
+This route is for readers who already know [Expressions](expressions.html),
+[Functions](functions.html), and [System capabilities](system-context.html).
+Begin with [Core operations](core-operations.html), then use [Lowering syntax](lowering-and-ir.html)
+to trace an expression. [Host objects and plugins](host-and-plugins.html) covers
+capability ownership when you need to extend a host.
 For example, `2 + 3` and `.Add(2, 3)` reach the same core arithmetic operation.
 The first is the notation most people write; the second is a useful explicit
 form when code is being generated, inspected, or taught.

@@ -79,7 +79,7 @@ is selected:
 ```text
 ReducePair = (numerator, denominator) ->
     denominator == 0
-        ?: {: numerator < 0 ?: -1 ?_ 1, 0 }
+        ?: {: numerator == 0 ?: 0 ?_ numerator < 0 ?: -1 ?_ 1, 0 }
         ?_ {;
             common = PairGcd(numerator, denominator);
             {: numerator // common, denominator // common };
@@ -102,7 +102,7 @@ PairGcd = (left, right) -> {;
 
 ReducePair = (numerator, denominator) ->
     denominator == 0
-        ?: {: numerator < 0 ?: -1 ?_ 1, 0 }
+        ?: {: numerator == 0 ?: 0 ?_ numerator < 0 ?: -1 ?_ 1, 0 }
         ?_ {;
             common = PairGcd(@numerator, @denominator);
             {: @numerator // common, @denominator // common };
@@ -112,6 +112,22 @@ ReducePair(6, 8);
 ```
 
 Notice that `common` stays bare: it belongs to the current branch block.
+
+### A multifunction alternative
+
+The previous cell defines `PairGcd`. Keep it, then put the zero-denominator case and the ordinary reduction in separate variants:
+
+```rix edu
+ReducePairByVariant(numerator, denominator) ?- [denominator == 0] /ZeroDenominator/ =>
+    {: numerator == 0 ?: 0 ?_ numerator < 0 ?: -1 ?_ 1, 0 };
+
+ReducePairByVariant(numerator, denominator) ?!- [common = PairGcd(numerator, denominator)] /Reduce/ =>
+    {: numerator // common, denominator // common };
+
+[ReducePairByVariant(6, 8), ReducePairByVariant(-5, 0), ReducePairByVariant(0, 0)];
+```
+
+The first variant handles a zero denominator before `PairGcd` runs. In the second, preparation computes `common` once and makes it available to the body. There is no extra branch block, so `numerator` and `denominator` remain local parameter names; no `@` captures are needed. The strict `?!-` preparation also makes an unexpected `PairGcd` error visible. Both versions return `( 0, 0 )` for a zero numerator and denominator, matching JavaScript's `Math.sign(0)`.
 
 ## Gotcha 3: not every name in a loop needs `@`
 

@@ -1,45 +1,29 @@
 ---
-number: 5c
+number: 5b
 title: Scope and imports
 description: Closures, outer names, and block headers.
 ---
 
-## Orientation
+## Read an outer name
 
 RiX resolves names lexically. Inside a nested callable, `@name` accesses an outer binding, while block import headers make copying and aliasing explicit.
-
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
 
 ```rix edu
 x := 10;
 ReadOuter() -> @x;
-ReadOuter() ;
+ReadOuter();
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+The result is 10. The `@` makes the outer read explicit. Change `x` to 4 and rerun the cell; the function sees the revised surrounding value.
 
-## Read the result
+## Keep updates clear
 
-Closures retain the scopes they need; updates should state whether they target the local or outer cell.
+Closures retain the scopes they need. When a nested body needs to change an outer cell, make that intention explicit with `@name`. [Cells and assignment](cells.html) explains shared identity and updates; [Bounded simulation](capstone-simulation.html) shows `@balance` in a loop.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Change the outer binding and rerun the cell to verify what `@x` reads.
 
 :::challenge Scope and imports practice
 Define a function that reads an outer value and combines it with its argument.
 :::
 
-## Keep going
-
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Multifunctions](multifunctions.html) to combine guarded function variants, or [Transforming data](transformations.html) for simple callbacks.

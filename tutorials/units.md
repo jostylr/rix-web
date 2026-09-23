@@ -1,7 +1,7 @@
 ---
 number: 8c
 title: Physical units and quantities
-description: Compose units as values, convert exactly, and catch dimensional mistakes.
+description: Compose units, convert exactly, and catch dimensional mistakes.
 ---
 
 ## Units are ordinary values

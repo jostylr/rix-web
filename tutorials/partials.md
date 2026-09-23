@@ -1,44 +1,28 @@
 ---
-number: 5d
+number: 5e
 title: Partial application
 description: Placeholders and arity-capped callables.
 ---
 
-## Orientation
+## Leave an argument open
 
 Partial functions leave a callable shape behind. Operator aliases and numbered placeholders make small callbacks readable, especially inside collection pipelines.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
-
 ```rix edu
 Double := @*(_1, 2);
-Double(9) ;
+Double(9);
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+`_1` stands for the argument supplied later; the result is 18. Compare this with the ordinary `Double(x) -> x * 2` in [Define and call](function-basics.html). Use the version that makes the calculation easier to read.
 
-## Read the result
+## Use a partial as a callback
 
-Arity caps control how much callback context a partial accepts when a pipe supplies locator and source values.
+Pipes can pass a value, locator and source. A partial that needs only its first argument can cap its arity so the extra context does not change its meaning; see [Pipes](pipes.html) for the basic callback form. Keep the first callback simple before using placeholders in a pipeline.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Use a second input with `Double` and check that the placeholder receives the call argument each time.
 
 :::challenge Partial application practice
 Create a partial that subtracts its input from 10.
 :::
 
-## Keep going
-
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Rule dispatcher](capstone-dispatch.html) if your program needs several input families rather than one open argument.

@@ -1,7 +1,7 @@
 ---
-number: 7c
+number: 6c
 title: Lazy generators
-description: Contrast eager arrays with cached sequences that produce values on demand.
+description: Contrast eager arrays with cached on-demand sequences.
 ---
 
 ## Eager and lazy answer different questions

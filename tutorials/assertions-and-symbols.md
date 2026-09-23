@@ -10,10 +10,7 @@ Assertions state conditions that must hold now; symbolic specs preserve
 definitions and constraints for a later consumer. Keep runtime assertions
 small and diagnostic, and use `{#}` when a plugin should interpret a system.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
+Start with one small relation, then inspect how the symbolic form differs from evaluating a numeric expression.
 
 ## Assertions
 
@@ -70,10 +67,7 @@ a reusable symbolic description; solving it is explicit plugin functionality.
 The former `:=:` solve operator has been removed because it could not express
 algorithm, precision, branch, or certification tradeoffs.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Change one relation in the examples and check whether the resulting specification still expresses what you intended.
 
 :::challenge Assertions and symbolic specs practice
 Write a comparison that should pass, then change it to one that should fail and inspect the diagnostic.
@@ -81,6 +75,4 @@ Write a comparison that should pass, then change it to one that should fail and 
 
 ## Keep going
 
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [Exact symbolic calculus](symbolic-calculus.html) once the spec forms are familiar.

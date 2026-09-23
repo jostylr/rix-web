@@ -1,7 +1,7 @@
 ---
 number: 8g
-title: Capstone: semantic measurement
-description: Attach meaning to an exact measurement workflow.
+title: Capstone: exact measurement
+description: Combine physical dimensions with an exact symbolic magnitude.
 ---
 
 ## The problem
@@ -9,7 +9,7 @@ description: Attach meaning to an exact measurement workflow.
 A measurement has an exact magnitude, physical dimensions, and a chosen
 display unit. This capstone combines quantities with an exact symbolic constant.
 
-This capstone deliberately reuses ideas from every lesson in its section. Read the setup first, predict the last value, and only then run the cell. If the result surprises you, inspect each named intermediate rather than changing several lines at once.
+Prerequisites: [Physical units](units.html) and [Exact generators](exact-generators.html). Predict which parts of the result remain exact before running the cell.
 
 ## Build the solution
 
@@ -31,7 +31,7 @@ The quantity runtime enforces dimensional compatibility rather than relying on
 a comment or sticky metadata. Display choice remains separate: centimetres and
 metres share a Length dimension and an exact conversion factor.
 
-The important design choice is visible in the notation: collection shape, assignment mode, scope marker, or system boundary communicates an intention that would otherwise have to live in a comment.
+The magnitude retains an exact π factor, while the unit conversion changes the presentation scale without changing the measured dimension.
 
 ## Extend the model
 

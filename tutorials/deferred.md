@@ -1,43 +1,33 @@
 ---
-number: 6c
+number: 4c
 title: Deferred execution
 description: Delay and evaluate code deliberately.
 ---
 
-## Orientation
+## Keep code for later
 
-Deferred values keep code for later. Dynamic evaluation and `@@` can intentionally use the caller's scope, so they should be introduced only when ordinary functions are not enough.
+Prerequisites: [Blocks](brace-containers.html) and [Scope and imports](scope.html). A deferred value keeps code as a value until something asks to evaluate it. Use an ordinary function when the only goal is to reuse a calculation; deferral is for code that must be inspected or evaluated at a chosen time.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
-
-## A worked example
+`@{; ... }` holds a block; `.Eval()` runs it. The output is 5.
 
 ```rix edu
-{; value := 3; value + 1 } ;
+later := @{; 2 + 3 };
+later.Eval();
 ```
 
-The final line is the displayed value; the earlier lines set up the experiment.
-Keep the setup visible so you can tell whether a name, a cell, or a collection
-is being reused when the expression changes.
+Change the addition to multiplication and predict the result. The block is not evaluated merely by binding `later`.
 
-## Read the result
+## Choose the evaluation boundary
 
-RatCalc can evaluate ordinary blocks; script-level dynamic evaluation is best explored after learning scope.
+`.Eval` can also evaluate a source string. `@@later` evaluates a deferred value directly in the caller's scope, so caller-visible names and updates require care. Keep ordinary functions and blocks for everyday calculations; use dynamic evaluation only when the scope is intentional.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+```rix edu
+later := @{; 2 + 3 };
+@@later;
+```
 
 :::challenge Deferred execution practice
-Write a block whose final expression uses a name bound earlier in the block.
+Create a deferred block that multiplies 3 and 4, then evaluate it. Expect 12.
 :::
 
-## Keep going
-
-Return to the overview when you need context, or continue to the next sibling
-lesson for a focused variation. Collection chapters also end with method help
-that includes signatures and examples.
+Continue with [RiX scripts](rix-scripts.html) for reusable programs with explicit capability boundaries.

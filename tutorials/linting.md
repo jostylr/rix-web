@@ -1,7 +1,7 @@
 ---
 number: 10f
-title: Live RiX lint laboratory
-description: Find and repair scope, control-flow, reactive, mathematical, and plugin mistakes without running them.
+title: Live lint laboratory
+description: Find and repair scope, control-flow, reactive, mathematical, and plugin mistakes.
 lint: true
 lintProfile: all
 lintLevel: pedantic

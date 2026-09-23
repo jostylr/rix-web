@@ -1,17 +1,14 @@
 ---
-number: 2e
+number: 3f
 title: Shaped values
-description: Structured multidimensional exact data.
+description: Read rectangular exact data, then choose an advanced numerical representation if needed.
 ---
 
 ## Orientation
 
 Shaped values store rectangular data without implying matrix or tensor algebra. The shape comes after `{:` and semicolons separate rows; shaped locators are one-based tuples.
 
-Read this chapter with RatCalc open. Predict the result before running an
-example, then change a single part and run it again. That small loop of
-prediction, execution, and inspection is the fastest way to make RiX syntax
-feel like a language rather than a table of symbols.
+Start with the small exact grid. Sparse coordinates and Float tensors in the advanced section need separate numerical choices.
 
 ## A worked example
 
@@ -28,18 +25,15 @@ is being reused when the expression changes.
 
 Try a slice such as `grid[1:2, 2]`; shaped views retain their selected axes. Matrix algebra requires an explicit `/Matrix/` header or `grid ~!: :Matrix`; mathematical vectors and tensors additionally need Frames from the linalg plugin.
 
-Try a second value of your own. When an advanced feature depends on files,
-JavaScript, or extension registration, RatCalc explains the concept but does
-not grant browser permissions implicitly. Use the detail pages and the help
-panel to connect this experiment to the broader language rules.
+Change one grid entry and verify a one-based lookup before loading any plugin.
 
 :::challenge Shaped values practice
 Create a 2x2 identity-shaped value and retrieve its lower-right entry.
 :::
 
-## Choose the numerical representation deliberately
+## Advanced: choose the numerical representation deliberately
 
-Prerequisites for the following examples: Arrays and exact fractions. Loading a
+This section is optional after the first worked grid. Continue to [Exact inventory](capstone-inventory.html) for a beginner collection task. Prerequisites for the following examples: Arrays and exact fractions. Loading a
 bundled plugin is supported in this browser; these examples need no files,
 network access, or worker. A shaped value describes storage axes. Coordinate
 Frames, tensor contractions, and sparse coordinate algebra are taught in the
