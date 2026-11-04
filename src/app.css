@@ -310,3 +310,22 @@ body { height: 100dvh; }
 .interval-trace button:hover, .interval-number-links button:hover, .reactive-history button:hover { background: #f5f3ff; }
 .interval-trace button:focus-visible, .interval-number-links button:focus-visible,
 .reactive-organization :focus-visible, .reactive-history button:focus-visible { outline: 2px solid #6d28d9; outline-offset: 2px; }
+
+/* Legacy web-calculator look (apps/webcalc/docs/calc.css): larger history
+   type, a flush monospace keypad, softer body/error colors, lighter card shadow. */
+@media (min-width: 721px) { .output-history { font-size: 1.5rem; line-height: 1.4; } }
+.input-line .prompt { font-weight: 700; }
+.output-line { color: #333; }
+.output-line.rich-output { font-size: 1rem; }
+.error-line { background: #fee; color: #dc2626; }
+.calculator { box-shadow: 0 8px 32px rgba(0, 0, 0, .1); }
+.mobile-key-grid { gap: 2px; background: #f0f0f0; }
+.mobile-key-grid button { border: 0; border-radius: 0; min-height: 44px; font: 1.2rem "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace; }
+.mobile-key-grid [data-action], .mobile-key-grid [data-mobile-action="commands"] { font-size: .95rem; }
+.mobile-key-grid [data-mobile-action="backspace"] { background: #fee2e2; color: #dc2626; }
+.mobile-key-grid [data-action="clear"] { background: #fef3c7; color: #d97706; }
+.mobile-key-grid [data-mobile-action="commands"] { background: #ede9fe; color: #7c3aed; }
+@media (max-width: 460px) {
+  .mobile-key-grid { gap: 1px; }
+  .mobile-key-grid button:not([data-action]):not([data-mobile-action="commands"]) { font-size: 1.5rem; font-weight: 700; }
+}
