@@ -17,7 +17,7 @@ In `{@ i = 0; i < 4; body }`, `i = 0` initializes a loop-local counter, `i < 4` 
 ```rix edu
 balance := 5 / 2;
 {@ i = 0; i < 4; {; @balance += 3 / 4; i += 1 } };
-balance ;
+balance ##@ == 11/2;
 ```
 
 ## How the pieces fit

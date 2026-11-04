@@ -20,7 +20,7 @@ Compare the dot call with ordinary arithmetic so the capability boundary has a c
 ## A worked example
 
 ```rix edu
-.ADD(3, 4) ;
+.ADD(3, 4) ##@ == 7;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

@@ -11,7 +11,9 @@ An interval keeps both endpoints in a single value, so uncertainty travels with 
 ```rix edu
 a := 2:3;
 b := 4:5;
-a * b;
+product := a * b;
+[product.Low(), product.High()] ##@ == [8, 15];
+product;
 ```
 
 The product spans 8 through 15. These are exact endpoints; the value does not choose one number inside the range. Change an endpoint and predict how the bound changes.
@@ -21,7 +23,7 @@ The product spans 8 through 15. These are exact endpoints; the value does not ch
 Three colon-separated values ask whether the middle one lies between the outer two. The first comparison is true and the second is false.
 
 ```rix edu
-[2:7:10, 2:12:10];
+[2:7:10, 2:12:10] ##@ == [1, _];
 ```
 
 See [Number notation](number-notation.html) for more interval spellings and [Recipe scaling](capstone-exact-recipe.html) for a calculation that carries a bound through a product.

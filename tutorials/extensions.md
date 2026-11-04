@@ -39,7 +39,7 @@ method on a preloaded plugin object:
 ##OPS##
 
 Mediant(a, b) -> a + b;
-1 :<o+>: 2;
+1 :<o+>: 2 ##@ == 3;
 ```
 
 Plugin manifests can name `operator-files`, while a script YAML header can

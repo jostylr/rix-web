@@ -421,6 +421,7 @@ b = 2;
 c = 3;
 d = 4;
 a == 1 ?: Combine(a, b, c, d) ?_ _;
+foreign := {= (0)="first" };
 ## rix-lint-disable-next-line RX1702 -- foreign object uses a documented zero-based index
 foreign[0];
 ```

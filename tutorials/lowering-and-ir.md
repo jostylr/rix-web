@@ -14,11 +14,11 @@ The key point is that lowering preserves semantics, not punctuation. An
 absolute-value delimiter and an explicit core call both end up at `ABS`.
 
 ```rix edu
-| -7 | ;
+| -7 | ##@ == 7;
 ```
 
 ```rix edu
-.Abs(-7) ;
+.Abs(-7) ##@ == 7;
 ```
 
 ## Esoteric syntax still has an operation
@@ -27,7 +27,7 @@ RiX offers notation that can be excellent for mathematics but awkward to emit
 from a tool. The core name gives that tool an ordinary call-shaped alternative.
 
 ```rix edu
-{; least = {<< 8, 3, 5 }; explicit = .Min(8, 3, 5); least == explicit } ;
+{; least = {<< 8, 3, 5 }; explicit = .Min(8, 3, 5); least == explicit } ##@ == 1;
 ```
 
 This is also why public names are useful for teaching: one can identify the
@@ -40,7 +40,7 @@ as IR so its parameter has a meaning later; the same idea applies to branches,
 blocks, loop pieces, assignment targets, and other structural forms.
 
 ```rix edu
-{; .Assign(:F, .Lambda(.Params(:x), .Add(x, 1))); F(9) } ;
+{; .Assign(:F, .Lambda(.Params(:x), .Add(x, 1))); F(9) } ##@ == 10;
 ```
 
 When the lambda is created, its `.Add(x, 1)` body is captured. Only `F(9)`

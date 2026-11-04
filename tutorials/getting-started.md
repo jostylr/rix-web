@@ -13,6 +13,7 @@ Press **Run cell** below. The result appears immediately beneath the editor. RiX
 ```rix edu
 1 / 3 + 1 / 6;
 ```
+<!-- rix-expect: 1/2 -->
 
 Change `1 / 6` to `1 / 3`, predict the answer, and press **Re-Run Cell**. See [Expressions](expressions.html) and [Number notation](number-notation.html) for more exact calculations.
 
@@ -25,6 +26,7 @@ first := 1 / 3;
 second := 1 / 6;
 first + second;
 ```
+<!-- rix-expect: 1/2 -->
 
 Change `second` to `1 / 3` and run this cell again. The plain `=` sign has a different job in RiX; [Cells and assignment](cells.html) explains it when you need shared state.
 
@@ -33,7 +35,7 @@ Change `second` to `1 / 3` and run this cell again. The plain `=` sign has a dif
 FizzBuzz needs to ask whether a number is divisible by three. `%` gives the remainder, while `==` asks whether two values are equal. The result below is `[1, _]`: `1` means true and `_` means false or null in this setting.
 
 ```rix edu
-[6 % 3 == 0, 7 % 3 == 0];
+[6 % 3 == 0, 7 % 3 == 0] ##@ == [1, _];
 ```
 
 Write the whole comparison. Zero itself is truthy in RiX, so a bare `n % 3` is not a divisibility test. See [Operators and precedence](operators.html) for more comparisons.
@@ -44,7 +46,7 @@ Write the whole comparison. Zero itself is truthy in RiX, so a bare `n % 3` is n
 
 ```rix edu
 n := 6;
-n % 3 == 0 ?: "Fizz" ?_ n;
+n % 3 == 0 ?: "Fizz" ?_ n ##@ == "Fizz";
 ```
 
 See [Ternaries and cases](ternaries.html) for more decisions and [Tuples and strings](tuples-and-strings.html) for text. Comparisons involving uncertain values can also return `?`; exact integer inputs here give decided answers.
@@ -57,6 +59,7 @@ An uppercase name can define a callable. In `Fizz(n) -> ...`, `n` is the paramet
 Fizz(n) -> n % 3 == 0 ?: "Fizz" ?_ n;
 Fizz(6);
 ```
+<!-- rix-expect: Fizz -->
 
 Try `Fizz(7)` in the last line. The [Define and call](function-basics.html) lesson develops functions further.
 
@@ -70,7 +73,7 @@ FizzBuzz(n) ->
     n % 3 == 0 ?: "Fizz" ?_
     n % 5 == 0 ?: "Buzz" ?_
     n;
-[FizzBuzz(2), FizzBuzz(3), FizzBuzz(5), FizzBuzz(15)];
+[FizzBuzz(2), FizzBuzz(3), FizzBuzz(5), FizzBuzz(15)] ##@ == [2, "Fizz", "Buzz", "FizzBuzz"];
 ```
 
 The expected result is `[2, Fizz, Buzz, FizzBuzz]`. The array display omits quotation marks around strings; `Fizz`, `Buzz` and `FizzBuzz` are still text values.
@@ -81,7 +84,7 @@ Square brackets make an array. RiX arrays start at index `1`, so the second item
 
 ```rix edu
 numbers := [2, 3, 5, 15];
-numbers[2];
+numbers[2] ##@ == 3;
 ```
 
 The map pipe `|>>` applies a callback to every item. `(n) -> FizzBuzz(n)` describes what to do with each input. This cell has all its own setup because this topic begins with a fresh context.
@@ -93,7 +96,7 @@ FizzBuzz(n) ->
     n % 5 == 0 ?: "Buzz" ?_
     n;
 numbers := [2, 3, 5, 15];
-numbers |>> (n) -> FizzBuzz(n);
+numbers |>> (n) -> FizzBuzz(n) ##@ == [2, "Fizz", "Buzz", "FizzBuzz"];
 ```
 
 See [Arrays](arrays.html) for indexing and [Pipes](pipes.html) for mapping and filtering.
@@ -105,7 +108,7 @@ See [Arrays](arrays.html) for indexing and [Pipes](pipes.html) for mapping and f
 ```rix edu
 limit := 15;
 numbers := [1 |+ 1 |; limit];
-numbers[15];
+numbers[15] ##@ == 15;
 ```
 
 See [Generators](generators.html) for other finite patterns. Lazy generators are a later option when you want values on demand.
@@ -125,6 +128,7 @@ limit := 15;
 numbers := [1 |+ 1 |; limit];
 numbers |>> (n) -> FizzBuzz(n);
 ```
+<!-- rix-expect: [1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, FizzBuzz] -->
 
 Read the result from left to right: `1, 2, Fizz, 4, Buzz, Fizz, 7, 8, Fizz, Buzz, 11, Fizz, 13, 14, FizzBuzz`. Change `limit` to `30` and rerun. There should be 30 items, with `FizzBuzz` at positions 15 and 30.
 

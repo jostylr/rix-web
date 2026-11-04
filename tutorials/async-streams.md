@@ -14,6 +14,7 @@ The `|>>`, `|>?`, and expected-value `|>!` pipes add lazy stages.
 stream := .Stream([1, 2, 3, 4], :numbers)
     |>> ((x) -> x^2)
     |>? ((x) -> x > 4);
+stream.Status()[:pulled] ##@ == 0;
 stream;
 ```
 
@@ -25,7 +26,7 @@ an explicit terminal such as `Collect`, `ForEach`, `Reduce`, `First`, or
 (.Stream([1, 2, 3, 4], :numbers)
     |>> ((x) -> x^2)
     |>? ((x) -> x > 4)
-).Collect();
+).Collect() ##@ == [9, 16];
 ```
 
 `|>_` is the consuming ForEach pipe. Unlike Map it does not build a result
@@ -36,7 +37,7 @@ return values, and returns null.
 $$latestSquare := _;
 (.Stream([1, 2, 3, 4], :numbers) |>> ((x) -> x^2))
     |>_ ((value) -> ($latestSquare := value));
-$latestSquare;
+$latestSquare ##@ == 16;
 ```
 
 Ordered Find and All are consuming stream terminals too. They keep bounded
@@ -48,7 +49,7 @@ the source-ordered result is fixed.
     .Stream([3, 5, 8, 10], :search)
         |>> ((x) -> x^2)
         |>|| ((x) -> x % 2 == 0)
-};
+} ##@ == 64;
 ```
 
 ## Process file or HTTP-style chunks
@@ -58,8 +59,9 @@ iterable to the same pull protocol. This finite example stands in for chunks
 supplied by a file or response capability. Each pull provides backpressure.
 
 ```rix edu
-chunks := .Stream(["header\n", "body one\n", "body two\n"], :file_chunks);
+chunks := .Stream(["header", "body one", "body two"], :file_chunks);
 result := (chunks |>> ..Upper).Collect();
+result ##@ == ["HEADER", "BODY ONE", "BODY TWO"];
 {= chunks=result, status=chunks.Status() };
 ```
 
@@ -80,7 +82,7 @@ the source as soon as their ordered result is known.
         |>> ((x) -> x^2)
         |>? ((x) -> x > 8)
     ).Collect(3)
-};
+} ##@ == [9, 16, 25];
 ```
 
 Timeouts and cancellation reach a pending pull and promise-aware host
@@ -118,7 +120,7 @@ result := {;
     stream := .Stream([2, 3, 4], :owned) ##_ ..Close;
     stream.Reduce(1, (product, value) -> product * value)
 };
-result;
+result ##@ == 24;
 ```
 
 Cleanup runs exactly once on normal completion, early result, fault, timeout,

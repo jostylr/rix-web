@@ -15,7 +15,7 @@ Start with one small relation, then inspect how the symbolic form differs from e
 ## Assertions
 
 ```rix edu
-3 < 5 ;
+3 < 5 ##@ == 1;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.

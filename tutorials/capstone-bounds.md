@@ -16,6 +16,7 @@ This capstone deliberately reuses ideas from every lesson in its section. Read t
 reading := [,,][1];
 permitted := 18:22;
 effective := reading ?| permitted;
+[effective.Low(), effective.High()] ##@ == [18, 22];
 effective ;
 ```
 

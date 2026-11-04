@@ -12,7 +12,7 @@ as its first argument:
 
 ```rix edu
 .RegisterMethod(:Rational, :Twice, (self) -> self * 2);
-{: (3/7).Twice(), (5/11).Twice() };
+{: (3/7).Twice(), (5/11).Twice() } ##@ == {: 6/7, 10/11 };
 ```
 
 The registration changes method lookup, not either rational value or the

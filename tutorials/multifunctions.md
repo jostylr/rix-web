@@ -17,7 +17,7 @@ Run the simple absolute-value variants first, then compare how later guards acce
 ```rix edu
 Abs(x) ?- [x >= 0] /Positive/ => x;
 Abs(x) /Negative/ => -x;
-Abs(-7) ;
+Abs(-7) ##@ == 7;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.
@@ -37,7 +37,7 @@ Use a soft prep clause to skip a variant and a strict one when failure should st
   (x) ?- [x < 0] /Negative/ -> -x,
   (x) ?- [x > 0] /Positive/ -> x^2,
   (x) /Zero/ -> 0
-} ;
+} ##@ == [3, 0, 16];
 ```
 
 The result is `[3, 0, 16]`. Variants are tried in order. A decisively false
@@ -62,7 +62,7 @@ Classify = {>
     Classify(0.5),
     Classify(0.6),
     Classify(0.5?)
-];
+] ##@ == [:below, :above, ?];
 ```
 
 The last result is `?`. The enclosure represented by `0.5?` contains values
@@ -79,7 +79,7 @@ Classify = {>
     (x) ??- [x < 0.55] /Below/ -> :below,
     (x) /Unresolved/ -> :needsRefinement
 };
-Classify(0.5?);
+Classify(0.5?) ##@ == :needsRefinement;
 ```
 
 Use `??!-` when dispatch may continue only after the guard becomes decidable.
@@ -105,7 +105,7 @@ Classify(x) -> {;
     Classify(0.5),
     Classify(0.6),
     Classify(0.5?)
-];
+] ##@ == [:below, :atOrAbove, :needsRefinement];
 ```
 
 This makes the policy visible: ordered guard dispatch remains conservative,
@@ -118,7 +118,7 @@ Entries can also be existing functions or whole multifunctions. Whole multifunct
 Small = {> (x) /Increment/ -> x + 1 };
 Large = {> (x) /Scale/ -> x * 10 };
 Combined = {> Small, Large };
-Combined[2](3) ;
+Combined[2](3) ##@ == 30;
 ```
 
 A named variant is an ordinary function value. Select it with `F[:Name]`, call it directly, pass it to a pipe, or insert it into another multifunction:
@@ -129,7 +129,7 @@ Abs = {>
   (x) /Negative/ -> -x
 };
 PositiveOnly = {> Abs[:Positive] };
-PositiveOnly(7) ;
+PositiveOnly(7) ##@ == 7;
 ```
 
 Change the input from negative to positive and check which variant runs before exploring the advanced guard forms.

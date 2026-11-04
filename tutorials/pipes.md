@@ -9,7 +9,7 @@ description: Map, filter, and combine values with short callbacks.
 `|>>` applies a function to each array value and returns an array of results. The callback's first parameter receives one value at a time.
 
 ```rix edu
-[1, 2, 3] |>> (x) -> x * 2;
+[1, 2, 3] |>> (x) -> x * 2 ##@ == [2, 4, 6];
 ```
 
 The result is `[2, 4, 6]`. Try `x ^ 2` instead and predict the new array.
@@ -19,7 +19,7 @@ The result is `[2, 4, 6]`. Try `x ^ 2` instead and predict the new array.
 `|>?` keeps values whose predicate succeeds. This example keeps 2 and 4. Write `% 2 == 0` explicitly: zero alone is truthy in RiX.
 
 ```rix edu
-[1, 2, 3, 4] |>? (x) -> x % 2 == 0;
+[1, 2, 3, 4] |>? (x) -> x % 2 == 0 ##@ == [2, 4];
 ```
 
 ## Combine a finite array
@@ -27,7 +27,7 @@ The result is `[2, 4, 6]`. Try `x ^ 2` instead and predict the new array.
 `|>:` reduces the array with a function of the accumulated value and the next value. It starts with the first item, so the sum below is 10.
 
 ```rix edu
-[1, 2, 3, 4] |>: (total, value) -> total + value;
+[1, 2, 3, 4] |>: (total, value) -> total + value ##@ == 10;
 ```
 
 For an empty collection, use an explicit initial value or choose another operation. Callback forms can also receive a one-based index and the original source when needed; [Arrays](arrays.html) provides a position-aware example. Start with one value parameter until the other context has a purpose.

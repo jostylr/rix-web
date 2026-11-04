@@ -54,7 +54,7 @@ coefficient array both in a table and in a graphic.
 ```rix edu
 coefficients := [1, -2, -1];
 valueAtThree := 3 ^ 2 - 2 * 3 - 1;
-[coefficients, valueAtThree] ;
+[coefficients, valueAtThree] ##@ == [[1, -2, -1], 2];
 ```
 
 :::challenge Pick an output form

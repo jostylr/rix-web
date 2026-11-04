@@ -12,7 +12,7 @@ Prerequisites: [Blocks](brace-containers.html) and [Scope and imports](scope.htm
 
 ```rix edu
 later := @{; 2 + 3 };
-later.Eval();
+later.Eval() ##@ == 5;
 ```
 
 Change the addition to multiplication and predict the result. The block is not evaluated merely by binding `later`.
@@ -23,7 +23,7 @@ Change the addition to multiplication and predict the result. The block is not e
 
 ```rix edu
 later := @{; 2 + 3 };
-@@later;
+@@later ##@ == 5;
 ```
 
 :::challenge Deferred execution practice

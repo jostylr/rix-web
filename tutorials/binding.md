@@ -13,7 +13,7 @@ x := 5;
 alias = x;
 copy := x;
 x ~= 6;
-[x, alias, copy];
+[x, alias, copy] ##@ == [6, 6, 5];
 ```
 
 Expect `[6, 6, 5]`. Use [Cells and assignment](cells.html) for identity and deep copying. [Destructuring](destructuring.html) pulls multiple values into names; [Properties and metadata](properties.html) covers value annotations.

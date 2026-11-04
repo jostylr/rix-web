@@ -33,7 +33,7 @@ again commits it and returns focus to the grid.
 The canonical address indexes the original shaped, not the Sheet output:
 
 ```rix edu
-grid[2,3] ;
+grid[2,3] ##@ == 6;
 ```
 
 If the shaped is named `rates`, use `address="rates"`. The address base is
@@ -108,7 +108,7 @@ indices. `At` returns the value; `Index` reveals the unchanged numeric tuple:
         measure="Cost",
         scenario="Forecast"
     })
-] ;
+] ##@ == [11, {: 2, 2, 2 }];
 ```
 
 The result is `[11, ( 2, 2, 2 )]`. Duplicate labels are fine cosmetically, but
@@ -193,6 +193,7 @@ model := .FormulaSheet({:2x2:
     }
 });
 formulaView := .Sheet(model, {= title="Formula results" });
+model[2,2] ##@ == 5;
 formulaView ;
 ```
 
@@ -227,6 +228,7 @@ The same source-backed update is available programmatically:
 
 ```rix edu
 model.SetSource(1, 1, "::= 10");
+model[2,2] ##@ == 23;
 .Sheet(model, {= title="Recalculated results" }) ;
 ```
 
@@ -269,6 +271,7 @@ book := .FormulaSheet({:2x2:
 
 saved := .RiXCelExport(book);
 loaded := .RiXCelImport(saved);
+loaded[2,2] ##@ == 23;
 
 .Sheet(loaded) ;
 ```
@@ -324,7 +327,7 @@ ${
     $$target2 := $target1 * 4;
     $$target3 := $target2 + $source1
 };
-[target1, target2] ;
+[target1, target2] ##@ == [5, 20];
 ```
 
 `$name := ...` replaces that cell's deferred definition while preserving its
@@ -336,7 +339,7 @@ ${
     $source1 := 10;
     $source2 := 3
 };
-[target1, target2, target3] ;
+[target1, target2, target3] ##@ == [13, 52, 62];
 ```
 
 The result is `[13, 52, 62]`. `$$alias := $$source1` would bind another name to
@@ -346,7 +349,7 @@ the reactive forms. An uppercase callable declaration is a reactive function:
 
 ```rix edu
 $$Scale := x -> x * $source1;
-[Scale(3), $Scale(3)] ;
+[Scale(3), $Scale(3)] ##@ == [30, 30];
 ```
 
 `Scale(3)` calls the current definition without tracking its identity;

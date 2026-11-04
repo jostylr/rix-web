@@ -17,7 +17,7 @@ stock := {= bolts=24, nuts=18, washers=30 };
 pickList := ["bolts", "washers", "bolts"];
 requested := {| "bolts", "washers", "bolts" |};
 boltCount := stock.Get("bolts");
-{: boltCount, pickList, requested } ;
+{: boltCount, pickList, requested } ##@ == {: 24, ["bolts", "washers", "bolts"], {| "bolts", "washers" |} };
 ```
 
 ## How the pieces fit

@@ -12,14 +12,14 @@ over the expression; they are not needed to construct it.
 ```rix edu
 x := .ExpressionVariable(:x);
 expression := x^2 + 3*x + 1;
-{: .IsExpression(expression), expression.Kind(), x.Record()[:name] };
+{: .IsExpression(expression), expression.Kind(), x.Record()[:name] } ##@ == {: 1, :operator, :x };
 ```
 
 Exact scalar operands become constant nodes when combined with expressions.
 Ordinary numerical arithmetic remains numerical.
 
 ```rix edu
-{: 2+3, .ExpressionConstant(5).Kind() };
+{: 2+3, .ExpressionConstant(5).Kind() } ##@ == {: 5, :constant };
 ```
 
 ## Algorithms remain plugins
@@ -28,7 +28,7 @@ Ordinary numerical arithmetic remains numerical.
 .Plugin.Load("cas");
 t := .ExpressionVariable(:t);
 integral := .cas.Integrate(t^2,:t);
-.cas.CheckIntegral(integral)[:accepted];
+.cas.CheckIntegral(integral)[:accepted] ##@ == 1;
 ```
 
 The constructors do not automatically simplify, integrate, or approximate.
@@ -52,7 +52,9 @@ names, and `@::x` explicitly captures an already introduced enclosing symbol.
 outer := ::x;
 {;
     inner := ::x;
-    {: .SameSymbol(inner,@::x), .SameSymbol(@outer,@::x), inner==@::x };
+    results := {: .SameSymbol(inner,@::x), .SameSymbol(@outer,@::x), inner==@::x };
+    {: results[1], results[2] } ##@ == {: _, 1 };
+    results;
 };
 ```
 
@@ -76,6 +78,7 @@ symbolic literal; `( ::x )` makes an expression boundary explicit if needed.
 
 ```rix edu
 ::dependent = ::x - 0;
+[::dependent==::x, .SameSymbol(::dependent,::x)] ##@ == [1, _];
 {: ::dependent==::x, .SameSymbol(::dependent,::x), .ExpressionExpand(::dependent) };
 ```
 
@@ -100,7 +103,7 @@ context := {& :::t | 1:0; :::t > 0 &
     visits ~= visits+1;
     :::t^2 * ::parameter;
 };
-{: visits,context[:domains][1][:domain][:orientation],context[:domains][1][:domain][:lowerclosed] };
+{: visits,context[:domains][1][:domain][:orientation],context[:domains][1][:domain][:lowerclosed] } ##@ == {: 1, :desc, _ };
 ```
 
 The body runs once, in the same programming scope. The returned record retains
@@ -134,9 +137,11 @@ This context does not yet prove or simplify that relation.
 
 ```rix edu
 enclosed := ::position + (0:1);
-{: .ExpressionConstantInfo(enclosed.Operands()[2])[:denotation],
+comparisons := {: .ExpressionConstantInfo(enclosed.Operands()[2])[:denotation],
    .ExpressionConstant(0:1)==(0:1),.ExpressionConstant(0:1)==(2:3),
    .ExpressionConstant(1:1)==1 };
+{: comparisons[1], comparisons[3], comparisons[4] } ##@ == {: :setEnclosure, _, 1 };
+comparisons;
 ```
 
 An interval is a set enclosure, not a secretly selected real number. Overlap
@@ -148,7 +153,7 @@ Construction does not perform numerical evaluation or refinement.
 exactPi := 1~{pi};
 withPi := ::position + exactPi;
 {: withPi.Kind(),.ExpressionConstantInfo(exactPi)[:provider],
-   .ExpressionConstant(exactPi)==exactPi };
+   .ExpressionConstant(exactPi)==exactPi } ##@ == {: :operator, :exactScalar, 1 };
 ```
 
 Core exact scalars also promote, using generator identities rather than their
@@ -166,7 +171,7 @@ rootKey := .ExpressionKey(realRoot);
 rootCopy ::= realRoot;
 rootResult := .ExpressionRefine(rootCopy,{= absoluteWidth=1/10000,maxWork=100 });
 {: rootResult[:goalMet],rootKey==.ExpressionKey(realRoot),realRoot==rootCopy,
-   .ExpressionConstantInfo(realRoot)[:provider],(::position+realRoot).Kind() };
+   .ExpressionConstantInfo(realRoot)[:provider],(::position+realRoot).Kind() } ##@ == {: 1, 1, 1, :refinableReal, :operator };
 ```
 
 The constant retains one real's identity, its enclosure, and its procedure.
@@ -179,7 +184,7 @@ Separate adaptations remain distinct identities with undecided equality.
 .Plugin.Load("numerics");
 coarseRoot := .ExpressionReal(.numerics.Sqrt(2),{= absoluteWidth=1/100000,maxWork=1 });
 coarseResult := .ExpressionRefine(coarseRoot,{= absoluteWidth=1/100000,maxWork=1 });
-{: coarseResult[:status],coarseResult[:certified],coarseResult[:goalMet] };
+{: coarseResult[:status],coarseResult[:certified],coarseResult[:goalMet] } ##@ == {: :budgetExhausted, 1, _ };
 ```
 
 Budget exhaustion can still return a certified enclosure. Check `goalMet`
@@ -194,7 +199,7 @@ the provider's claim. Procedures stay in memory; saved reals become snapshots.
 savedGraph := .MathEncodeJSON((::savedX,::savedY,::savedX));
 loadedGraph := .MathDecodeJSON(savedGraph);
 {: .SameSymbol(loadedGraph[1],loadedGraph[3]),loadedGraph[1]==loadedGraph[2],
-   .SameSymbol(::savedX,loadedGraph[1]) };
+   .SameSymbol(::savedX,loadedGraph[1]) } ##@ == {: 1, 1, _ };
 ```
 
 Shared identities and definitions survive, but imported symbols are fresh.
@@ -206,7 +211,7 @@ graphLines := .MathEncodeJSONL([::savedX,::savedX]);
 graphRows := .MathDecodeJSONL(graphLines);
 savedContext := .MathDecodeJSON(.MathEncodeJSON({& :::t | 1:0 & :::t*::savedX }));
 {: .SameSymbol(graphRows[1],graphRows[2]),savedContext[:validation],
-   savedContext[:domains][1][:domain][:orientation] };
+   savedContext[:domains][1][:domain][:orientation] } ##@ == {: _, :unverifiedImport, :desc };
 ```
 
 Each JSONL line has an independent identity table. Put related values in one
@@ -218,7 +223,7 @@ unverified data; their assumptions are retained, not automatically proved.
 portableRoot := .MathDecodeJSON(.MathEncodeJSON(.ExpressionReal(.numerics.Sqrt(2))));
 {: .ExpressionConstantInfo(portableRoot)[:provider],
    .ExpressionConstantInfo(portableRoot)[:refinable],
-   .ExpressionConstantInfo(portableRoot)[:validation] };
+   .ExpressionConstantInfo(portableRoot)[:validation] } ##@ == {: :realSnapshot, _, :unverifiedImport };
 ```
 
 The singleton and its enclosure survive as a frozen snapshot. The procedure
@@ -256,7 +261,7 @@ earlier in this worksheet.
 {;
     expr := ::x^2+1;
     ans := expr.Eval([(::x,3)]);
-    (ans[:status],ans[:value]);
+    (ans[:status],ans[:value]) ##@ == (:complete, 10);
 };
 ```
 
@@ -272,7 +277,7 @@ value of 3. A negative replacement contradicts the retained assumption.
     ctx := {& ::x>0 & ::x+1 };
     good := .MathEvaluate(ctx,[(::x,2)]);
     bad := .MathEvaluate(ctx,[(::x,-2)]);
-    (good[:status],good[:value],good[:candidate],bad[:status]);
+    (good[:status],good[:value],good[:candidate],bad[:status]) ##@ == (:complete, 3, 3, :invalidAssumptions);
 };
 ```
 
@@ -284,7 +289,7 @@ a binder or insert a bound symbol. Use the separate `Instantiate` method below.
     ctx := {& :::x | 0:1 & :::x+::x };
     changed := .MathSubstitute(ctx,[(::x,7)]);
     (.SameSymbol(ctx[:binders][1],changed[:result].Operands()[1]),
-     .MathEvaluate(changed)[:status]);
+     .MathEvaluate(changed)[:status]) ##@ == (1, :unresolved);
 };
 ```
 ## Evaluating under local mathematical facts
@@ -299,7 +304,7 @@ facts. Semicolons separate the header assumptions. Its body can be empty.
     ctx := {& ::x==3; ::y==7 & };
     ans := expr.Eval(ctx);
     changed := expr.Substitute([(::y,::x)]);
-    (ans[:status],ans[:value],changed==::x^2+::x,.ExpressionDefinition(::x));
+    (ans[:status],ans[:value],changed==::x^2+::x,.ExpressionDefinition(::x)) ##@ == (:complete, 16, 1, _);
 };
 ```
 
@@ -311,7 +316,7 @@ x is positive does not pick a numerical value for x.
 {;
     expr := ::x+1;
     ans := expr.Eval({& ::x>0; ::x==3 & });
-    (ans[:value],expr.Eval({& ::x>0 & })[:status],expr.Eval()[:status]);
+    (ans[:value],expr.Eval({& ::x>0 & })[:status],expr.Eval()[:status]) ##@ == (4, :unresolved, :unresolved);
 };
 ```
 
@@ -325,7 +330,7 @@ it is not a proof that those assumptions hold universally.
     expr := ::x+1;
     unknown := expr.Eval({& ::x==::y; ::y==7 & });
     conflict := expr.Eval({& ::x==3; ::y==7; ::x==::y & });
-    (unknown[:status],conflict[:status],conflict[:value]);
+    (unknown[:status],conflict[:status],conflict[:value]) ##@ == (:unresolved, :invalidAssumptions, _);
 };
 ```
 ## Instantiating a bound parameter
@@ -341,7 +346,7 @@ It selects a parameter value; it does not perform an integral or a sum.
     point := ctx.Instantiate([(t,1/2)]);
     bad := ctx.Instantiate([(t,0)]);
     (point.Eval()[:value],bad.Eval()[:status],ctx[:binders].Len(),
-     point[:domains][1][:domain][:orientation]);
+     point[:domains][1][:domain][:orientation]) ##@ == (1/4, :invalidAssumptions, 1, :desc);
 };
 ```
 
@@ -352,7 +357,7 @@ any unselected binders remain local. Bound symbols cannot be inserted as replace
 {;
     ctx := {& :::t | 0:1 & :::t+1 };
     point := ctx.Instantiate([(ctx[:binders][1],::x/2)]);
-    (point.Eval()[:status],point.Eval([(::x,1)])[:value],point[:instantiations].Len());
+    (point.Eval()[:status],point.Eval([(::x,1)])[:value],point[:instantiations].Len()) ##@ == (:unresolved, 3/2, 1);
 };
 ```
 ## Evaluating with intervals and exact scalars
@@ -366,7 +371,7 @@ can widen the enclosure. Domain overlap stays conditional rather than being assu
     ans := (::x^2+1).Eval([(::x,-1:2)]);
     ctx := {& :::t>0 & :::t+1 };
     overlap := ctx.Instantiate([(ctx[:binders][1],0:2)]).Eval();
-    (ans[:status],ans[:resultKind],ans[:enclosure].Start(),ans[:enclosure].End(),overlap[:status]);
+    (ans[:status],ans[:resultKind],ans[:enclosure].Start(),ans[:enclosure].End(),overlap[:status]) ##@ == (:complete, :setEnclosure, 1, 5, :conditional);
 };
 ```
 
@@ -379,7 +384,7 @@ exact expressions is not presumed safe, nor is an exact-to-interval approximatio
     p := 1~{pi};
     ans := ((::x+1)^2/2).Eval([(::x,p)]);
     (ans[:status],ans[:resultKind],
-     .ExpressionConstant(ans[:value])==.ExpressionConstant((p+1)^2/2));
+     .ExpressionConstant(ans[:value])==.ExpressionConstant((p+1)^2/2)) ##@ == (:complete, :exactScalar, 1);
 };
 ```
 
@@ -400,7 +405,7 @@ evaluation conditional. Live provider evidence is protocol-checked, not independ
     a := loose[:enclosure]; b := tight[:enclosure];
     saved := .MathDecodeJSON(.MathEncodeJSON(r));
     (tight[:status],tight[:resultKind],tight[:value],
-     b.End()-b.Start()<a.End()-a.Start(),saved.Eval()[:status]);
+     b.End()-b.Start()<a.End()-a.Start(),saved.Eval()[:status]) ##@ == (:enclosed, :singletonEnclosure, _, 1, :conditional);
 };
 ```
 ## Choosing a work budget
@@ -414,7 +419,7 @@ the default. Larger budgets can require much more time and memory.
 {;
     expr := (::x+1)^64;
     ans := expr.Eval([(::x,1~{pi})],{= maxProductPairs=2048 });
-    (ans[:status],ans[:budgets][:maxProductPairs],.MathBudgets()[:maxProductPairs]);
+    (ans[:status],ans[:budgets][:maxProductPairs],.MathBudgets()[:maxProductPairs]) ##@ == (:complete, 2048, 1024);
 };
 ```
 
@@ -432,7 +437,7 @@ Its semantic ID specifies the meaning; the display name does not select executab
     Root(x) -> .ExpressionApply("rix.function.sqrt.real-principal@1",:Sqrt,[x]);
     ans := Root(::x).Eval([(::x,2)]);
     (ans[:status],ans[:resultKind],
-     .ExpressionConstant(ans[:value]^2)==.ExpressionConstant(2),Root(9/4).Eval()[:value]);
+     .ExpressionConstant(ans[:value]^2)==.ExpressionConstant(2),Root(9/4).Eval()[:value]) ##@ == (:complete, :exactScalar, 1, 3/2);
 };
 ```
 
@@ -446,7 +451,7 @@ not the width of the input interval. A partially negative domain is not silently
     a := expr.Eval([(::x,2:3)],{= rootBits=8 })[:enclosure];
     b := expr.Eval([(::x,2:3)],{= rootBits=32 })[:enclosure];
     (b.Start()^2<=2,b.End()^2>=3,
-     b.End()-b.Start()<a.End()-a.Start(),Root(-1:2).Eval()[:status]);
+     b.End()-b.Start()<a.End()-a.Start(),Root(-1:2).Eval()[:status]) ##@ == (1, 1, 1, :unresolved);
 };
 ```
 
@@ -459,7 +464,7 @@ the allowlisted kernel. Unknown semantics remain unresolved.
     expr := .ExpressionApply("rix.function.abs.real@1",:Abs,[::x]);
     ans := expr.Eval({& ::x == -3 & });
     saved := .MathDecodeJSON(.MathEncodeJSON(expr.Substitute([(::x,-4)])));
-    (ans[:value],saved.Eval()[:value],ans[:semantics][1]);
+    (ans[:value],saved.Eval()[:value],ans[:semantics][1]) ##@ == (3, 4, "rix.function.abs.real@1");
 };
 ```
 ## Calculus and CAS with scoped symbols
@@ -477,7 +482,7 @@ independent, even though both symbols have the same display name.
     primitive := .cas.Integrate(a*b,a);
     (da.Eval([(a,3)])[:value],db.Eval()[:value],
      primitive[:antiderivative].Eval([(a,2),(b,3)])[:value],
-     .cas.CheckIntegral(primitive)[:accepted]);
+     .cas.CheckIntegral(primitive)[:accepted]) ##@ == (6, 1, 6, 1);
 };
 ```
 
@@ -491,7 +496,7 @@ just a reciprocal. Unsupported branch conditions remain conditional.
     d := .calculus.DifferentiateResult(.calculus.Log()(::x),::x);
     good := .calculus.EvaluateResult(d,[(::x,2)]);
     bad := .calculus.EvaluateResult(d,[(::x,-2)]);
-    (good[:value],bad[:status],good[:obligations].Len());
+    (good[:value],bad[:status],good[:obligations].Len()) ##@ == (1/2, :invalidAssumptions, 1);
 };
 ```
 ## Scoped polynomial forms
@@ -509,7 +514,7 @@ integrated. A distinct same-named symbol is not an interchangeable polynomial va
     factored := .cas.Factor(::x^2-1,::x);
     (.SameSymbol(p.Variable(),::x),p.Evaluate(2),
      primitive[:antiderivative].Eval([(::x,1)])[:value],factored[:status],
-     .cas.Expand((::x+1)^3,::x)[:expression].Eval([(::x,0)])[:value]);
+     .cas.Expand((::x+1)^3,::x)[:expression].Eval([(::x,0)])[:value]) ##@ == (1, 27, 15/4, :complete, 1);
 };
 ```
 
@@ -522,7 +527,7 @@ converting them into a different polynomial.
 {;
     coefficients := .MathPolynomialCoefficients((::x+1)^32,::x,{= maxProductPairs=4096 });
     p := .poly({= coefficients=coefficients,order=:ascending,variable=::x });
-    (p.Degree(),.SameSymbol(p.Variable(),::x),p.Evaluate(0));
+    (p.Degree(),.SameSymbol(p.Variable(),::x),p.Evaluate(0)) ##@ == (32, 1, 1);
 };
 ```
 
@@ -539,7 +544,7 @@ first and `a` second; restoring its expression recovers the original identities.
     F := .Poly(spec);
     expr := .ExpressionFromSpec(F);
     (F(2,3),expr.Eval([(a,3),(b,2)])[:value],
-     .InspectSpec(spec)[:symbolBindings].Len());
+     .InspectSpec(spec)[:symbolBindings].Len()) ##@ == (11, 11, 2);
 };
 ```
 
@@ -552,7 +557,7 @@ Specification composition also retains identities. Capitalize callable names:
     Q := .SpecFromExpression(::y+1,[::y]);
     expr := .ExpressionFromSpec(P(Q));
     d := .ExpressionFromSpec(.Deriv(P,::x));
-    (expr.Eval([(::y,3)])[:value],d.Eval([(::x,3)])[:value]);
+    (expr.Eval([(::y,3)])[:value],d.Eval([(::x,3)])[:value]) ##@ == (16, 6);
 };
 ```
 
@@ -574,6 +579,8 @@ preserve this distinction, and the checker recomputes the range from the evidenc
     a := ::x; b := {; ::x };
     same := .numerics.GraphRange(a-a,[(a,1:2)]);
     different := .numerics.GraphRange(a-b,[(a,1:2),(b,1:2)]);
+    [same[:interval].Start(),same[:interval].End(),
+     different[:interval].Start(),different[:interval].End()] ##@ == [0, 0, -1, 1];
     (same[:interval],different[:interval],
      .numerics.CheckGraphRange(different)[:certified]);
 };
@@ -590,6 +597,7 @@ time or total work across all partitions. Increasing budgets can cost time and m
 {;
     ans := .numerics.GraphRange(::x/::x,[(::x,(-1):1)],
         {= maxDepth=200,maxWork=20000,maxSubintervals=2 });
+    [ans[:interval].Start(),ans[:interval].End(),ans[:domainStatus]] ##@ == [1, 1, :partiallyDefined];
     (ans[:interval],ans[:domainStatus],
      .numerics.CheckGraphRange(ans)[:certified],
      ans[:budgets][:maxDepth],ans[:budgets][:maxWork]);
@@ -615,6 +623,7 @@ a second-derivative remainder. Subdivision can make their enclosures tighter.
     broad := .numerics.LipschitzRange(d,[(::x,(-1):1)]);
     split := .numerics.LipschitzRange(d,[(::x,(-1):1)],{= maxSubintervals=2 });
     taylor := .numerics.TaylorRange(dd,[(::x,(-1):1)]);
+    (sign[:direction],taylor[:checker][:accepted],taylor[:curvature]) ##@ == (:nondecreasing, 1, :convex);
     (sign[:direction],broad[:range],split[:range],
      taylor[:checker][:accepted],taylor[:curvature]);
 };
@@ -639,7 +648,7 @@ Recognition arithmetic uses configurable core `MathBudgets` settings.
     low := .numerics.RecognizeGraph((::x+1)^8,::x,{= maxProductPairs=2 });
     high := .numerics.RecognizeGraph((::x+1)^8,::x,{= maxProductPairs=100 });
     (.SameSymbol(ans[:variable],::x),ans[:kind],
-     ans[:sourceDomainRestrictions].Len(),low[:recognized],high[:recognized]);
+     ans[:sourceDomainRestrictions].Len(),low[:recognized],high[:recognized]) ##@ == (1, :rationalFunction, 1, _, 1);
 };
 ```
 
@@ -657,7 +666,7 @@ external prover, saved executable code, or trusted leaf in this example.
     proof := .numerics.DerivativeProof(d,{= maxWork=1000 });
     (proof[:certified],proof[:evidenceLevel],proof[:trustedDependencies].Len(),
      .SameSymbol(proof[:conclusion][:variable],::x),
-     proof[:evidence][:nodes][1][:rule]);
+     proof[:evidence][:nodes][1][:rule]) ##@ == (1, :checkedEvidence, 0, 1, "derivative.graph");
 };
 ```
 
@@ -682,7 +691,7 @@ both print as `x`, but only `b` is replaced in the outer expression.
     composed := outer.Substitute([(b,inner)],{= maxDepth=16 });
     d := .calculus.DifferentiateResult(composed,a);
     sign := .numerics.DerivativeSign(d,[(a,1:2)]);
-    (composed.Eval([(a,2)])[:value],sign[:direction],sign[:monotonicityCertified]);
+    (composed.Eval([(a,2)])[:value],sign[:direction],sign[:monotonicityCertified]) ##@ == (9, :nondecreasing, 1);
 };
 ```
 
@@ -706,7 +715,7 @@ Zero gives exact one; other rational inputs give certified enclosures.
     exact := expr.Eval([(::x,0)]);
     ans := expr.Eval([(::x,1)],{= transcendentalBits=32 });
     limited := expr.Eval([(::x,1)],{= maxSumTerms=1 });
-    (exact[:value],ans[:status],ans[:value],ans[:budgets][:transcendentalBits],limited[:status]);
+    (exact[:value],ans[:status],ans[:value],ans[:budgets][:transcendentalBits],limited[:status]) ##@ == (1, :enclosed, _, 32, :unresolved);
 };
 ```
 
@@ -731,7 +740,7 @@ strictly positive input: a range touching zero is unresolved, not silently clipp
     ans := expr.Eval([(::x,2)],{= transcendentalBits=32 });
     domain := expr.Eval([(::x,0:2)]);
     limited := expr.Eval([(::x,2)],{= maxSumTerms=1 });
-    (exact[:value],ans[:status],ans[:value],domain[:status],limited[:status]);
+    (exact[:value],ans[:status],ans[:value],domain[:status],limited[:status]) ##@ == (0, :enclosed, _, :unresolved, :unresolved);
 };
 ```
 
@@ -760,7 +769,7 @@ would miss that maximum.
     range := expr.Eval([(::x,1:2)]);
     limited := expr.Eval([(::x,1)],{= maxSumTerms=1 });
     (expr.Eval([(::x,0)])[:value],cosine.Eval([(::x,0)])[:value],
-     ans[:status],range[:enclosure].End(),range[:resultKind],limited[:status]);
+     ans[:status],range[:enclosure].End(),range[:resultKind],limited[:status]) ##@ == (0, 1, :enclosed, 1, :setEnclosure, :unresolved);
 };
 ```
 
@@ -794,7 +803,7 @@ radians. Divide an angle quantity by `1~[rad]` to obtain a scalar radian argumen
     ans := expr.Eval([(::x,(1/7)~{pi})],{= transcendentalBits=32 });
     saved := .MathDecodeJSON(.MathEncodeJSON(expr.Substitute([(::x,radians)])));
     (radians==(1/6)~{pi},exact[:value],diagonal[:value]^2,
-     ans[:status],saved.Eval()[:value]);
+     ans[:status],saved.Eval()[:value]) ##@ == (1, 1/2, 1/2, :enclosed, 1/2);
 };
 ```
 
@@ -820,7 +829,7 @@ symbol `::pi` or a custom generator `pi` does not grant it that identity.
     expr := .calculus.Sin()(::x);
     ans := expr.Eval([(::x,1000000)],{= transcendentalBits=32,maxExponent=32 });
     limited := expr.Eval([(::x,1000000)],{= maxExponent=4 });
-    (ans[:status],limited[:status]);
+    (ans[:status],limited[:status]) ##@ == (:enclosed, :unresolved);
 };
 ```
 
@@ -836,6 +845,7 @@ losing the requested precision. `maxExponent` caps reduction precision amplifica
     expr := .calculus.Sin()(::x);
     peak := expr.Eval([(::x,1:2)])[:enclosure];
     wide := expr.Eval([(::x,(-100):100)])[:enclosure];
+    [peak.Start()>4/5,peak.End(),wide.Start(),wide.End()] ##@ == [1, 1, -1, 1];
     (peak.Start()>4/5,peak.End(),wide);
 };
 ```
@@ -856,7 +866,7 @@ find extrema without iterating over the revolutions in the interval.
     sign := .numerics.DerivativeSign(d,[(::x,0:1)]);
     bound := .numerics.LipschitzRange(d,[(::x,0:1)]);
     (ans[:certified],ans[:exactImage],.numerics.CheckGraphRange(ans)[:certified],
-     sign[:direction],bound[:certified]);
+     sign[:direction],bound[:certified]) ##@ == (1, _, 1, :nondecreasing, 1);
 };
 ```
 

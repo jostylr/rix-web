@@ -48,7 +48,7 @@ println(a * b)
 ```rix edu
 a := {:2x2: /Matrix/ 1, 2; 3, 4 };
 b := {:2x2: /Matrix/ 5, 6; 7, 8 };
-a * b ;
+a * b ##@ == {:2x2: /Matrix/ 19, 22; 43, 50 } ;
 ```
 
 ## Reading the RiX solution

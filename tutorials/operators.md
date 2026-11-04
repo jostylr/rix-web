@@ -9,7 +9,7 @@ description: Group arithmetic, test divisibility, and compare exact values.
 Powers run before multiplication, then addition. `2 + 3 * 4 ^ 2` therefore returns `50`. Parentheses let you make a different grouping explicit.
 
 ```rix edu
-[2 + 3 * 4 ^ 2, (2 + 3) * 4 ^ 2];
+[2 + 3 * 4 ^ 2, (2 + 3) * 4 ^ 2] ##@ == [50, 80];
 ```
 
 The second result is `80`. Change the exponent and predict both results.
@@ -20,7 +20,7 @@ The second result is `80`. Change the exponent and predict both results.
 
 ```rix edu
 n := 14;
-[n % 7 == 0, n % 3 == 0];
+[n % 7 == 0, n % 3 == 0] ##@ == [1, _];
 ```
 
 `n := 14` names a value; `n == 14` compares it. Zero itself is truthy, so always make the test explicit in a conditional.
@@ -35,7 +35,7 @@ Parentheses make arguments unambiguous. You can explore RiX's adjacent applicati
 
 ```rix edu
 Double(x) -> x * 2;
-[Double(3) + 1, Double(3 + 1)];
+[Double(3) + 1, Double(3 + 1)] ##@ == [7, 8];
 ```
 
 The results are 7 and 8. Continue with [Collections and text](collections.html), or read [Define and call](function-basics.html) for more function examples.

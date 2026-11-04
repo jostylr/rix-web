@@ -10,7 +10,7 @@ At this point you know arrays and functions. A generator can make a finite input
 
 ```rix edu
 numbers := [1 |+ 1 |; 4];
-numbers |>> (x) -> x ^ 2;
+numbers |>> (x) -> x ^ 2 ##@ == [1, 4, 9, 16];
 ```
 
 ## Keep only useful results
@@ -18,7 +18,7 @@ numbers |>> (x) -> x ^ 2;
 Filter runs a predicate for each value. The cell below returns `[3, 4]`.
 
 ```rix edu
-[1 |+ 1 |; 4] |>? (x) -> x > 2;
+[1 |+ 1 |; 4] |>? (x) -> x > 2 ##@ == [3, 4];
 ```
 
 See [Pipes](pipes.html) for mapping, filtering and reducing, then [Generators](generators.html) for finite patterns. Regex and strings, lazy generators, async concurrency and streams are optional continuations once ordinary finite transformations are comfortable.

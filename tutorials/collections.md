@@ -10,7 +10,7 @@ An array holds values in order. Its first item has index `1`, and duplicate valu
 
 ```rix edu
 measurements := [3 / 2, 7 / 4, 2];
-measurements[2];
+measurements[2] ##@ == 7/4;
 ```
 
 The answer is the exact rational `7/4`, which the browser may display as a mixed number. Change the second entry and rerun the cell. [Arrays](arrays.html) explains reading and making a revised array.
@@ -24,7 +24,7 @@ name := "bolt";
 pair := {: name, 3 };
 stock := {= bolts=24, nuts=18 };
 choices := {| "bolt", "nut", "bolt" |};
-[name[1], pair[2], stock.Get("bolts"), choices.Has("nut")];
+[name[1], pair[2], stock.Get("bolts"), choices.Has("nut")] ##@ == ["b", 3, 24, 1];
 ```
 
 

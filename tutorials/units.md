@@ -14,7 +14,7 @@ m := .Units[:m];
 s := .Units[:s];
 distance := 120 * m;
 elapsed := 10 * s;
-distance / elapsed ;
+distance / elapsed ##@ == 12~[m/s];
 ```
 
 The result is `12~[m/s]`. Internally RiX keeps an exact magnitude, a physical
@@ -27,7 +27,7 @@ The bracket form is lookup-and-multiply sugar over the same `.Units` values:
 ```rix edu
 explicit := 9 * .Units[:m] / .Units[:s]^2;
 concise := 9~[m/s^2];
-explicit == concise ;
+explicit == concise ##@ == 1;
 ```
 
 Unknown names inside `~[...]` are errors rather than silently becoming labels.
@@ -40,7 +40,7 @@ left operand's display unit:
 ```rix edu
 inSeconds := 30~[s] + 2~[min];
 inMinutes := 2~[min] + 30~[s];
-{: inSeconds, inMinutes } ;
+{: inSeconds, inMinutes } ##@ == {: 150~[s], 2..1/2~[min] };
 ```
 
 The values describe the same duration but display as `150~[s]` and
@@ -52,7 +52,7 @@ The quantity already knows its source unit, so conversion only needs a target:
 
 ```rix edu
 speed := 36~[km/h];
-.ConvertUnit(speed, .Units[:m] / .Units[:s]) ;
+.ConvertUnit(speed, .Units[:m] / .Units[:s]) ##@ == 10~[m/s];
 ```
 
 Target strings are also accepted: `.ConvertUnit(speed, "m/s")`.
@@ -64,13 +64,13 @@ Fahrenheit because their zero points differ:
 
 ```rix edu
 roomC := .Units[:degC](20);
-.ConvertUnit(roomC, .Units[:degF]) ;
+.ConvertUnit(roomC, .Units[:degF]) ##@ == .Units[:degF](68);
 ```
 
 Subtracting two temperature points produces a linear difference:
 
 ```rix edu
-.Units[:degC](20) - .Units[:degC](12) ;
+.Units[:degC](20) - .Units[:degC](12) ##@ == 8~[deltaDegC];
 ```
 
 Adding two temperature points or compounding an affine coordinate is rejected.
@@ -83,7 +83,7 @@ Adding two temperature points or compounding an affine coordinate is rejected.
 ```rix edu
 fortnight := .DefineUnit(:fortnight, 14 * .Units[:day]);
 Units := .Units.Merge({= fortnight=fortnight });
-.ConvertUnit(1~[fortnight], .Units[:day]) ;
+.ConvertUnit(1~[fortnight], .Units[:day]) ##@ == 14~[day];
 ```
 
 :::challenge Unit conversion practice

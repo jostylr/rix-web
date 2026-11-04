@@ -11,7 +11,7 @@ description: Keep pi and algebraic roots exact through arithmetic.
 ```rix edu
 pi := .Exact[:pi];
 sqrt2 := .Exact[:sqrt2];
-{: 3*pi, 1 + 2*sqrt2 } ;
+{: 3*pi, 1 + 2*sqrt2 } ##@ == {: 3~{pi}, 1 + 2~{sqrt2} } ;
 ```
 
 The concise form again means lookup and multiplication:
@@ -19,7 +19,7 @@ The concise form again means lookup and multiplication:
 ```rix edu
 explicit := 3/2 * .Exact[:pi];
 concise := 3/2 ~{pi};
-explicit == concise ;
+explicit == concise ##@ == 1 ;
 ```
 
 Unlike a floating approximation, these remain exact expressions.
@@ -32,7 +32,7 @@ that relation:
 ```rix edu
 iSquared := .Exact[:i]^2;
 rootSquared := .Exact[:sqrt2]^2;
-{: iSquared, rootSquared } ;
+{: iSquared, rootSquared } ##@ == {: -1, 2 } ;
 ```
 
 The results are exactly `-1` and `2`.
@@ -44,7 +44,7 @@ RiX can invert an expression in one algebraic extension:
 ```rix edu
 a := 1 / .Exact[:i];
 b := 1 / (1 + .Exact[:sqrt2]);
-{: a, b } ;
+{: a, b } ##@ == {: -1~{i}, -1 + 1~{sqrt2} } ;
 ```
 
 This produces `-i` and `-1 + sqrt2`. A sum involving a transcendental
@@ -57,7 +57,7 @@ Exact expressions can be quantity magnitudes:
 ```rix edu
 halfTurn := 1/2 ~{pi}~[rad];
 diameter := 2~[m];
-halfTurn * diameter ;
+halfTurn * diameter ##@ == 1~{pi}~[m*rad] ;
 ```
 
 The π factor and the physical dimensions remain distinct layers.
@@ -69,7 +69,7 @@ Polynomial coefficients are listed from constant term upward:
 ```rix edu
 sqrt3 := .DefineExactGenerator(:sqrt3, [-3, 0, 1]);
 Exact := .Exact.Merge({= sqrt3=sqrt3 });
-1~{sqrt3}^2 ;
+1~{sqrt3}^2 ##@ == 3 ;
 ```
 
 :::challenge Exact generator practice

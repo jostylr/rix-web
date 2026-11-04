@@ -11,7 +11,7 @@ RiX resolves names lexically. Inside a nested callable, `@name` accesses an oute
 ```rix edu
 x := 10;
 ReadOuter() -> @x;
-ReadOuter();
+ReadOuter() ##@ == 10;
 ```
 
 The result is 10. The `@` makes the outer read explicit. Change `x` to 4 and rerun the cell; the function sees the revised surrounding value.

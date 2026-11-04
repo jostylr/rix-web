@@ -20,7 +20,7 @@ absolute value without relying on operator or map-literal syntax.
     .Pair(:change, change),
     .Pair(:magnitude, .Abs(change))
   )
-} ;
+} ##@ == {= subtotal=5, change=5, magnitude=5 };
 ```
 
 Every operation above is exact and uses the same core implementation as the

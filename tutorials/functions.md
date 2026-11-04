@@ -10,7 +10,7 @@ An uppercase name can define a callable. The function below takes `x` and return
 
 ```rix edu
 Square(x) -> x ^ 2;
-Square(12);
+Square(12) ##@ == 144;
 ```
 
 Change 12 to 7. A call can be part of a larger expression too: `Square(7) + 1` returns 50.

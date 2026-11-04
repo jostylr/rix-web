@@ -11,7 +11,7 @@ Indexes select stored values; metadata and methods describe how a value behaves.
 ```rix edu
 values := [1, 2];
 newValues := values.Push(3);
-{: values, newValues };
+{: values, newValues } ##@ == {: [1, 2], [1, 2, 3] };
 ```
 
 The receiver `values` remains `[1, 2]`; `Push` returns `[1, 2, 3]` as a new value. The dot keeps the subject of the operation visible. See [Arrays](arrays.html) for more collection methods.

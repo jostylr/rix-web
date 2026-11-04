@@ -14,7 +14,7 @@ Start with the small exact grid. Sparse coordinates and Float tensors in the adv
 
 ```rix edu
 grid := {:2x2: 1, 2; 3, 4 };
-grid[2, 1] ;
+grid[2, 1] ##@ == 3 ;
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.
@@ -47,7 +47,7 @@ matrix applied to a thousand-coordinate vector produces one nonzero value, 2:
 matrix = .linalg.SparseCoordinates([{= indices=[1,2], value=1/3 }], [1000,1000]);
 vector = .linalg.SparseCoordinates([{= indices=[2], value=6 }], [1000]);
 image = matrix.Apply(vector);
-[image.Get([1]), image.SupportSize(), image.Verify()];
+[image.Get([1]), image.SupportSize(), image.Verify()] ##@ == [2, 1, 1];
 ```
 
 This does not allocate a million dense cells. `.Apply` and `.MatMul` require
@@ -62,7 +62,8 @@ representable result retains the approximate label:
 .Plugin.Load("float");
 left = .float.Tensor([1,2,3,4], [2,2], :binary32);
 right = .float.Tensor([5,6], [2], :binary32);
-.float.ToShaped(.float.MatMul(left, right));
+.float.ToShaped(.float.MatMul(left, right))
+    ##@ == {:2: .float.Binary32(17), .float.Binary32(39) };
 ```
 
 The displayed cells are Float values 17 and 39, not exact Integer cells. The

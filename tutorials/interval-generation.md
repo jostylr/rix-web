@@ -17,14 +17,14 @@ the upper bound. The result is lazy and cached.
 
 ```rix edu
 oddPoints := 1:10 :+ 2;
-oddPoints[1:5] ;
+oddPoints[1:5] ##@ == [1, 3, 5, 7, 9];
 ```
 
 A negative step starts at the upper bound and walks downward.
 
 ```rix edu
 descending := 1:10 :+ -3;
-descending[1:4] ;
+descending[1:4] ##@ == [10, 7, 4, 1];
 ```
 
 The endpoint is included only when the chosen step lands on it exactly.
@@ -36,7 +36,7 @@ The sequence is lazy even though its length is known.
 
 ```rix edu
 grid := 0:1 :: 5;
-grid[1:5] ;
+grid[1:5] ##@ == [0, 1/4, 1/2, 3/4, 1];
 ```
 
 Exact rational arithmetic keeps values such as `1/4` and `3/4` exact.
@@ -47,7 +47,9 @@ Exact rational arithmetic keeps values such as `1/4` and `3/4` exact.
 are introduced.
 
 ```rix edu
-0:12 :/: 4 ;
+parts := 0:12 :/: 4;
+(parts |>> (iv -> [iv.Low(), iv.High()])) ##@ == [[0, 3], [3, 6], [6, 9], [9, 12]];
+parts ;
 ```
 
 Use partitions for bins and regions; use `::` when you need representative
@@ -59,14 +61,16 @@ The mediant of `a/b` and `c/d` is `(a+c)/(b+d)`. `:~ levels` returns a nested
 array: the original endpoints, followed by the points inserted at each level.
 
 ```rix edu
-1:2 :~ 2 ;
+1:2 :~ 2 ##@ == [[1, 2], [3/2], [4/3, 5/3]];
 ```
 
 `:~/ levels` uses the same exact boundaries to return a flat sequence of
 touching intervals. Level `n` creates `2^n` subintervals.
 
 ```rix edu
-1:2 :~/ 2 ;
+levelTwo := 1:2 :~/ 2;
+levelTwo.Len() ##@ == 4;
+levelTwo ;
 ```
 
 ## Continue forever from one point
@@ -76,14 +80,14 @@ upper interval bound.
 
 ```rix edu
 walk := 5::+2;
-walk[8] ;
+walk[8] ##@ == 19;
 ```
 
 Negative steps work the same way.
 
 ```rix edu
 countdown := 10::+ -3;
-countdown[1:6] ;
+countdown[1:6] ##@ == [10, 7, 4, 1, -2, -5];
 ```
 
 ## Sample a fixed rational grid
@@ -129,7 +133,9 @@ is without replacement on that rational grid.
 
 ```rix edu
 .RNG(:default, {= seed=12 });
-0:1 :/% (4, 1000) ;
+randomParts := 0:1 :/% (4, 1000);
+randomParts.Len() ##@ == 4;
+randomParts ;
 ```
 
 The number is the number of resulting subintervals, so four partitions require

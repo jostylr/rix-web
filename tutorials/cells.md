@@ -13,7 +13,7 @@ x := 5;
 alias = x;
 copy := x;
 x ~= 9;
-[x, alias, copy, x === alias, x === copy];
+[x, alias, copy, x === alias, x === copy] ##@ == [9, 9, 5, 1, _];
 ```
 
 The first three values are 9, 9 and 5. The identity checks are true and false: `alias` shares `x`'s cell, while `copy` does not. Change the replacement to 12 and check the same pattern.

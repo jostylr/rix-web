@@ -16,7 +16,7 @@ The evaluator still uses the same assignment and function machinery as the
 surface syntax.
 
 ```rix edu
-{; .Assign(:x, 7); .AssignCopy(:copy, x); x ~= 9; {: x, copy } } ;
+{; .Assign(:x, 7); .AssignCopy(:copy, x); x ~= 9; {: x, copy } } ##@ == {: 9, 7 };
 ```
 
 `Assign`, `AssignCopy`, `AssignUpdate`, `AssignDeepCopy`, and
@@ -30,7 +30,7 @@ target without using assignment punctuation.
 while the enclosing map constructor preserves the normal map semantics.
 
 ```rix edu
-.Map(.Pair(:sum, .Add(2, 3)), .Pair(:magnitude, .Abs(-7))) ;
+.Map(.Pair(:sum, .Add(2, 3)), .Pair(:magnitude, .Abs(-7))) ##@ == {= sum=5, magnitude=7 };
 ```
 
 This is especially useful for a tool that is constructing a record from a
@@ -44,11 +44,11 @@ body lazily, and `.Define` gives the resulting function a callable name. In
 the current evaluator, uppercase user names are callable.
 
 ```rix edu
-{; .Assign(:F, .Lambda(.Params(:x), .Add(x, 1))); F(4) } ;
+{; .Assign(:F, .Lambda(.Params(:x), .Add(x, 1))); F(4) } ##@ == 5;
 ```
 
 ```rix edu
-{; .Define(:DOUBLE, .Params(:x), .Mul(x, 2)); DOUBLE(4) } ;
+{; .Define(:DOUBLE, .Params(:x), .Mul(x, 2)); DOUBLE(4) } ##@ == 8;
 ```
 
 The public `.Params` form currently expresses positional parameters. More

@@ -16,7 +16,7 @@ Prerequisites: [Decisions](control.html), [Functions](functions.html), and [Diag
 ClampPositive(x) -> x > 0 ?: x ?_ 0;
 actual := ClampPositive(-3);
 expected := 0;
-actual == expected ;
+actual == expected ##@ == 1;
 ```
 
 ## How the pieces fit

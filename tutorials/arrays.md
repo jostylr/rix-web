@@ -10,7 +10,8 @@ Square brackets create an array. An array remembers order, and its first positio
 
 ```rix edu
 scores := [4, 9, 16];
-scores[2] ;
+scores[2] ##@ == 9;
+scores[-1] ##@ == 16;
 ```
 
 The result is `9`. Negative indexes count from the end, so `scores[-1]` is the final value.
@@ -19,7 +20,7 @@ One-based indexing is deliberate: positions in RiX line up with the way a mathem
 
 ```rix edu
 samples := [10, 20, 30, 40];
-{: samples.First(), samples.Get(-1), samples[2:3] } ;
+{: samples.First(), samples.Get(-1), samples[2:3] } ##@ == {: 10, 40, [20, 30] };
 ```
 
 Bracket slicing is inclusive at both ends. The tuple above therefore contains the first value, the last value, and a two-value middle slice. Run each expression separately if the combined output feels too dense.
@@ -31,7 +32,8 @@ Array methods without an exclamation point return a changed copy. This makes int
 ```rix edu
 scores := [4, 9, 16];
 nextScores := scores.Push(25);
-nextScores ;
+scores ##@ == [4, 9, 16];
+nextScores ##@ == [4, 9, 16, 25];
 ```
 
 The original `scores` is still `[4, 9, 16]`. This non-mutating style is a strong default because every name remains an inspectable step in the calculation. Bang methods such as `Push!` deliberately update their receiver; reserve them for code where shared changing state is actually part of the model.
@@ -44,7 +46,7 @@ Arrays participate in RiX's collection pipes. Mapping changes every element, whi
 values := [1, 2, 3, 4, 5];
 squares := values |>> (value) -> value ^ 2;
 evenSquares := squares |>? (value) -> value % 2 == 0;
-evenSquares ;
+evenSquares ##@ == [4, 16];
 ```
 
 This is an optional preview of [Pipes](pipes.html): `|>>` maps each value and `|>?` filters by a condition. The callback `(value) -> ...` describes one item's transformation. It can also receive a one-based position and the source collection when needed. Use the function chips below for method signatures and further examples.

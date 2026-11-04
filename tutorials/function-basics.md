@@ -10,14 +10,14 @@ A function takes inputs called parameters and returns the value of its body. Upp
 
 ```rix edu
 Add(x, y) -> x + y;
-Add(3, 4);
+Add(3, 4) ##@ == 7;
 ```
 
 The same function also works with exact fractions.
 
 ```rix edu
 Add(x, y) -> x + y;
-Add(1 / 3, 1 / 6);
+Add(1 / 3, 1 / 6) ##@ == 1/2;
 ```
 
 The result is `1/2`. Each level-two topic starts fresh, so this cell includes its own definition. Change either argument and rerun.
@@ -27,7 +27,7 @@ The result is `1/2`. Each level-two topic starts fresh, so this cell includes it
 `(x) -> x * 2` describes the same rule without naming it. A map pipe applies the rule once to each array item.
 
 ```rix edu
-[1, 2, 3] |>> (x) -> x * 2;
+[1, 2, 3] |>> (x) -> x * 2 ##@ == [2, 4, 6];
 ```
 
 The result is `[2, 4, 6]`. See [Pipes](pipes.html) for that traversal. [Scope and imports](scope.html) explains how nested functions see surrounding names; [Multifunctions](multifunctions.html) and [Partial application](partials.html) are later options.

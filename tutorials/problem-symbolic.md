@@ -48,7 +48,7 @@ DerivativeSpec := .Deriv(Source, {#x});
 Polynomial := .Poly(Source);
 Derivative := .Poly(DerivativeSpec);
 
-{: Polynomial(2, 3, 4), Derivative(2, 3, 4) } ;
+{: Polynomial(2, 3, 4), Derivative(2, 3, 4) } ##@ == {: 16, 12 } ;
 ```
 
 ## Reading the RiX solution

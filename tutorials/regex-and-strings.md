@@ -10,7 +10,7 @@ Regex literals support matching modes, while strings support indexes, slices, an
 
 ```rix edu
 text := "RatCalc";
-text[1:3];
+text[1:3] ##@ == "Rat";
 ```
 
 The slice is `Rat`: string positions begin at 1 and both endpoints are included. See [Strings and tuples](tuples-and-strings.html) for individual characters.
@@ -21,7 +21,7 @@ A regex literal is a callable pattern. The `?` mode asks only whether any digit 
 
 ```rix edu
 HasDigit := {/[0-9]+/?};
-[HasDigit("a2"), HasDigit("abc")];
+[HasDigit("a2"), HasDigit("abc")] ##@ == [1, _];
 ```
 
 Without `?`, a matching regex returns a match object with text and position information. Use that when the match itself matters, then pass results through a [pipe](pipes.html) if several strings need testing.

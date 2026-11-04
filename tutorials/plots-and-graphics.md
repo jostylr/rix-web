@@ -86,6 +86,7 @@ Append batches explicitly, retaining a bounded tail with original sample IDs:
 state := .plot.Stream(4);
 state := .plot.StreamAppend(state, [[1,1/3],[2,2/3],[3,1]]);
 state := .plot.StreamAppend(state, [[4,4/3],[5,5/3],[6,2]]);
+[state[:dropped], state[:data] |>> (p) -> p[1]] ##@ == [2, [3, 4, 5, 6]];
 .Fragment([
   .plot.StreamLine(state, {= maxPoints=4,title="Last four exact samples" }),
   .plot.HeatMapData([[1,2,3],[4,5,6]], [0,3], [0,2],

@@ -1,13 +1,15 @@
 // Tutorials check themselves: every h2 section runs in a fresh REPL, stated
 // results are guarded by `##@ == value` checks in the cells (a failed check is
-// an error), and indented :::challenge starters run after their section.
+// an error) or, where learners are invited to edit a cell, by an invisible
+// `<!-- rix-expect: text -->` line right after the fence that must equal the
+// displayed result. Indented :::challenge starters run after their section.
 //   bun run test:tutorials            # all published tutorials
 //   TUTORIAL=control-panels bun run test:tutorials
 import { expect, test } from "bun:test";
 import { createRixRepl } from "../src/repl-runtime.js";
 import { tutorials } from "../src/tutorial-index.js";
 
-const CELL = /```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```/g;
+const CELL = /```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```[ \t]*(?:\n<!--\s*rix-expect:\s*([\s\S]*?)\s*-->)?/g;
 const CHALLENGE = /^:::challenge[^\n]*\n([\s\S]*?)^:::\s*$/gm;
 
 // Indented (four-space) code runs inside a challenge, joined into starters.
@@ -29,11 +31,25 @@ export function challengeStarters(section) {
     return starters.filter((code) => code && !code.includes("## lint-problem"));
 }
 
+// Split at h2 headings outside fenced code (cells may start with `## comment`).
+function splitAtHeadings(source) {
+    const sections = [[]];
+    let fence = null;
+    for (const line of source.split("\n")) {
+        const marker = line.match(/^(`{3,}|~{3,})/)?.[1];
+        if (fence && marker && marker[0] === fence[0] && marker.length >= fence.length && !line.slice(marker.length).trim()) fence = null;
+        else if (!fence && marker) fence = marker;
+        if (!fence && /^##\s+/.test(line)) sections.push([line.replace(/^##\s+/, "")]);
+        else sections.at(-1).push(line);
+    }
+    return sections.map((lines) => lines.join("\n"));
+}
+
 export function tutorialSections(source) {
-    return source.split(/^##\s+/m).map((section, index) => ({
+    return splitAtHeadings(source).map((section, index) => ({
         index,
         title: index === 0 ? "(intro)" : section.split("\n", 1)[0].trim(),
-        cells: [...section.matchAll(CELL)].map(([, code]) => code).filter((code) => !code.includes("## lint-problem")),
+        cells: [...section.matchAll(CELL)].map(([, code, expected]) => ({ code, expected })).filter(({ code }) => !code.includes("## lint-problem")),
         starters: challengeStarters(section),
     }));
 }
@@ -56,11 +72,19 @@ for (const tutorial of published) {
             if (section.cells.length === 0 && section.starters.length === 0) continue;
             const repl = createRixRepl({ autoLoadPlugins: false });
             try {
-                for (const [kind, code] of [...section.cells.map((c) => ["cell", c]), ...section.starters.map((c) => ["challenge starter", c])]) {
+                const steps = [
+                    ...section.cells.map(({ code, expected }) => ["cell", code, expected]),
+                    ...section.starters.map((code) => ["challenge starter", code, undefined]),
+                ];
+                for (const [kind, code, expected] of steps) {
                     const response = await repl.runAsync(code);
+                    const preview = code.split("\n").slice(0, 3).join("\n");
                     if (response.type !== "result") {
-                        failures.push(`section "${section.title}" ${kind}: ${response.text}\n${code.split("\n").slice(0, 3).join("\n")}`);
+                        failures.push(`section "${section.title}" ${kind}: ${response.text}\n${preview}`);
                         break;
+                    }
+                    if (expected !== undefined && response.text !== expected) {
+                        failures.push(`section "${section.title}" ${kind}: expected ${expected}, displayed ${response.text}\n${preview}`);
                     }
                 }
             } finally {

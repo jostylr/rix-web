@@ -10,7 +10,7 @@ Quotation marks make text. Like arrays, RiX strings use one-based indexes. A neg
 
 ```rix edu
 word := "Fizz";
-[word[1], word[-1]];
+[word[1], word[-1]] ##@ == ["F", "z"];
 ```
 
 The result contains `F` and `z`. These are text values even though the display omits quotation marks. Try a different word and predict its first and last characters.
@@ -21,7 +21,7 @@ Use a tuple when the first and second positions have specific meanings. The `{: 
 
 ```rix edu
 pair := {: 3, 5 };
-pair[2];
+pair[2] ##@ == 5;
 ```
 
 An array is better for a sequence of interchangeable items. A [map](maps.html) is better when names such as `x` and `y` should label the values.

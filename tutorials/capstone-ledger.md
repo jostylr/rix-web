@@ -19,7 +19,7 @@ balance := amount;
 display = balance;
 archive := balance;
 balance += 1 / 2;
-{: display, archive } ;
+{: display, archive } ##@ == {: 4, 7/2 };
 ```
 
 ## How the pieces fit

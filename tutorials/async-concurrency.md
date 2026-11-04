@@ -16,7 +16,7 @@ places where independent work may overlap.
 
 ```rix edu
 Square(x) -> x^2;
-{$ <Square> [Square(2), Square(3), Square(4)] } ;
+{$ <Square> [Square(2), Square(3), Square(4)] } ##@ == [4, 9, 16];
 ```
 
 The result remains in source order even if host capabilities finish in a
@@ -48,7 +48,7 @@ offset := 10;
 {$jobs:2$ <base~offset>
     values := [base + 1, base + 2, base + 3];
     values |>> ((x) -> x^2)
-} ;
+} ##@ == [121, 144, 169];
 ```
 
 The first statement completes its array before the second statement begins.
@@ -65,14 +65,14 @@ a slower sibling. The published collection still preserves source order.
     [1, 2, 3, 4]
         |>> ((x) -> x^2)
         |>? ((x) -> x > 4)
-} ;
+} ##@ == [9, 16];
 ```
 
 `|>||` is ordered Find: predicates may overlap, but the result is the first
 passing item in traversal order, not the first one to finish.
 
 ```rix edu
-{$:3$ [7, 4, 10, 2] |>|| ((x) -> x % 2 == 0) } ;
+{$:3$ [7, 4, 10, 2] |>|| ((x) -> x % 2 == 0) } ##@ == 4;
 ```
 
 `|>&&` is the ordered All terminal. It returns the final source item when every
@@ -80,7 +80,7 @@ predicate passes, or null as soon as a source-ordered failure fixes the answer.
 Both terminals cancel later queued work and cooperatively stop active siblings.
 
 ```rix edu
-{$:2$ [2, 4, 6, 7, 8] |>&& ((x) -> x % 2 == 0) } ;
+{$:2$ [2, 4, 6, 7, 8] |>&& ((x) -> x % 2 == 0) } ##@ == _;
 ```
 
 After `.RANDOMSEED`, each concurrent source branch receives a reproducible
@@ -115,7 +115,7 @@ ordinary values pass through unchanged.
 ```rix edu
 [1, {: :error, :missing, 2}, {: :error, :ignore, 9}, 4]
     |>! ((kind, fallback) -> kind == :missing ?: fallback ?_ _)
-    |>> ((value) -> value * 10);
+    |>> ((value) -> value * 10) ##@ == [10, 20, 40];
 ```
 
 This is deliberately not a thrown-error catch. Language failures,
@@ -137,7 +137,7 @@ filter after the barrier starts a new concurrent region.
         |>/ 2:4
         |>> ((x) -> x + 1)
         |:> 0 >: ((sum, x) -> sum + x)
-} ;
+} ##@ == 32;
 ```
 
 Sort uses a stable promise-aware comparator. Ordered reduce never invokes two
@@ -182,7 +182,7 @@ slots:
 ```rix edu
 {$outer:4$
     {$inner:2$ [1^5, 2^5, 3^5, 4^5] }
-} ;
+} ##@ == [1, 32, 243, 1024];
 ```
 
 A break or failure cancels queued descendants of its owning group. A handled
@@ -242,7 +242,7 @@ result := {;
     resource := 4 ##_ ((value) -> value);
     resource + 1
 };
-result;
+result ##@ == 5;
 ```
 
 Async cleanup is awaited, and an item's cleanup completes before its concurrency
@@ -260,7 +260,7 @@ returns the final tuple so `|>!` can recover it.
 .Retry(
     {= attempts=3, delay=0, backoff=2, kinds=[:timeout] },
     @{ {: :error, :timeout, :offline } }
-) |>! ((kind, status) -> status);
+) |>! ((kind, status) -> status) ##@ == :offline;
 ```
 
 Kinds outside the allow-list and thrown errors are not retried. Delay is in

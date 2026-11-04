@@ -10,13 +10,13 @@ An expression produces a value. Integer division keeps a rational answer instead
 
 ```rix edu
 third := 1 / 3;
-third + third + third;
+third + third + third ##@ == 1;
 ```
 
 Use parentheses to choose a grouping. The second value below is `20`, while the first is `14`.
 
 ```rix edu
-[2 + 3 * 4, (2 + 3) * 4];
+[2 + 3 * 4, (2 + 3) * 4] ##@ == [14, 20];
 ```
 
 ## Compare values
@@ -25,7 +25,7 @@ The remainder `%` lets you ask about divisibility. `==` compares values; `:=` bi
 
 ```rix edu
 value := 12;
-[value % 3 == 0, value % 5 == 0];
+[value % 3 == 0, value % 5 == 0] ##@ == [1, _];
 ```
 
 Zero is truthy in RiX, so write the full comparison rather than using a bare remainder as a condition. [Operators and precedence](operators.html) develops these rules.

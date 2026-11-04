@@ -10,7 +10,7 @@ Use `|;` when you want a finished array now. Its number counts values that
 actually reach the output, including accepted seeds.
 
 ```rix edu
-[2 |+ 3 |; 5] ;
+[2 |+ 3 |; 5] ##@ == [2, 5, 8, 11, 14];
 ```
 
 Use `|^` when you want a lazy sequence with a known ceiling. RiX creates the
@@ -38,7 +38,7 @@ slice generates through its far endpoint and returns an ordinary finite array.
 
 ```rix edu
 squares := [|: (i) -> i^2];
-squares[5:10] ;
+squares[5:10] ##@ == [25, 36, 49, 64, 81, 100];
 ```
 
 The index passed to `|:` is also one-based. The first square is therefore
@@ -49,7 +49,7 @@ materializing every value.
 
 ```rix edu
 bounded := [10 |+ 10 |^ 8];
-[bounded.Len(), bounded.First(), bounded.Get(6)] ;
+[bounded.Len(), bounded.First(), bounded.Get(6)] ##@ == [8, 10, 60];
 ```
 
 ## Map and filter without becoming eager
@@ -61,7 +61,7 @@ values demanded downstream.
 ```rix edu
 evens := [1 |+ 1] |>? (x) -> x % 2 == 0;
 doubled := evens |>> (x) -> 2 * x;
-doubled[6] ;
+doubled[6] ##@ == 24;
 ```
 
 Filtering does not spend an output slot. Compare that behavior with this eager
@@ -69,7 +69,7 @@ chain: candidates that fail `|?` still advance the arithmetic source, but only
 successful values count toward `|; 5`.
 
 ```rix edu
-[2 |+ 3 |> (x) -> x^2 |? (x) -> x % 2 == 0 |; 5] ;
+[2 |+ 3 |> (x) -> x^2 |? (x) -> x % 2 == 0 |; 5] ##@ == [4, 64, 196, 400, 676];
 ```
 
 ## Generate from recent history
@@ -94,14 +94,14 @@ A predicate can bound either eager or lazy work. The triggering value is part
 of the result.
 
 ```rix edu
-[2 |+ 2 |; (x) -> x > 10] ;
+[2 |+ 2 |; (x) -> x > 10] ##@ == [2, 4, 6, 8, 10, 12];
 ```
 
 The lazy form evaluates the same rule only as values are requested.
 
 ```rix edu
 doublings := [2 |* 2 |^ (x) -> x > 1000];
-doublings[1:10] ;
+doublings[1:10] ##@ == [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 ```
 
 Because a predicate-bound sequence has no known length until it finishes,
@@ -118,7 +118,7 @@ source := [1 |+ 1];
 source[5];
 snapshot := source;
 restarted ::= source;
-[snapshot[7], restarted[2]] ;
+[snapshot[7], restarted[2]] ##@ == [7, 2];
 ```
 
 Aliases made with `=` still share one lazy value. Lazy sequences themselves
@@ -140,7 +140,7 @@ cursor moves.
 ```rix edu
 naturals := [1 |+ 1];
 walker := naturals.Iterator();
-[walker.Index(), walker.Next(2), walker.Peek(3), walker.Index(), walker.Next(-1), walker.Next(0)] ;
+[walker.Index(), walker.Next(2), walker.Peek(3), walker.Index(), walker.Next(-1), walker.Next(0)] ##@ == [0, 2, 5, 2, 1, 1];
 ```
 
 Here `Next(2)` skips the first item and returns item 2. `Peek(3)` reads item 5
@@ -157,7 +157,7 @@ steps.Reset(3);
 atThree := steps.Peek();
 afterThree := steps.Next();
 steps.Reset();
-[atThree, afterThree, steps.Next()] ;
+[atThree, afterThree, steps.Next()] ##@ == [30, 40, 10];
 ```
 
 Crossing the end with `Next` puts the cursor in its done state. `Done()` uses
@@ -167,7 +167,7 @@ end.
 
 ```rix edu
 short := [10, 20].Iterator();
-[short.Next(), short.Done(), short.Next(), short.Done(), short.Next(), short.Done()] ;
+[short.Next(), short.Done(), short.Next(), short.Done(), short.Next(), short.Done()] ##@ == [10, _, 20, _, _, 1];
 ```
 
 Iterators also work over eager arrays, tuples, strings, tensors, maps, and

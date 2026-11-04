@@ -39,7 +39,7 @@ values := [
     3.~7~15,
     1.25_^3
 ];
-values;
+values ##@ == [1000, 1000, 1/8, 1/100000000, -3/4, 1/8, 1/6, -9/4, 3 + 15/106, 1250];
 ```
 
 The final line is the displayed value; the earlier lines set up the experiment.
@@ -61,7 +61,7 @@ values := [
     ~-1.~2,
     -~1.~2
 ];
-values;
+values ##@ == [1/3, 1 + 129/550, 16/3, 3/2, -1/2, -3/2];
 ```
 
 `#` begins the repeating digits. Continued fractions use `.~`; a leading `~`
@@ -87,6 +87,8 @@ intervals := [
     1.2[+-0.1],
     0.[#3:#6]
 ];
+plusMinus := 1.2[+-0.1];
+[plusMinus.Low(), plusMinus.High()] ##@ == [119/100, 121/100];
 intervals;
 ```
 
@@ -105,6 +107,8 @@ the authoritative enclosure:
 decimal := 23.456?789;
 continued := 3.~7~15?;
 hexadecimal := 0xA.B?C;
+enclosure := decimal.Enclosure();
+[decimal.Candidate(), enclosure.Low(), enclosure.High()] ##@ == [23456789/1000000, 23456/1000, 23457/1000];
 [
     decimal,
     decimal.Candidate(),
@@ -122,12 +126,14 @@ not enlarge that target or define approximate equality:
 
 ```rix edu
 x := 0.549?;
-[
+halo := [
     x < {~ 0.55, 0.001 },
     0.551? ? {~ 0.55:0.56, 0.001 },
     0.5495 ? {~ 0.55:0.56, 0.001 },
     x ? {~ 0.55:0.56, 0.001 }
 ];
+[halo[2], halo[3]] ##@ == [1, _];
+halo;
 ```
 
 Membership is true when `x`'s enclosure fits in the target interval, false
@@ -148,6 +154,7 @@ comparison produces true, false, or standalone undecided `?`:
 ```rix edu
 x := 23.456?789;
 decision := x < 23.4565;
+(x + 1).ToString() ##@ == "24.456?789";
 [
     x + 1,
     decision,
@@ -176,7 +183,7 @@ The built-in prefixes are binary `0b`, ternary `0t`, quaternary `0q`, base 5
     0s10, 0o10, 0d10, 0x10,
     0v10, 0u10, 0m10, 0y10,
     0z[6]15
-];
+] ##@ == [2, 3, 4, 5, 7, 8, 12, 16, 20, 36, 60, 64, 11];
 ```
 
 Lowercase prefixes are built in. An uppercase prefix can be registered once
@@ -186,7 +193,7 @@ global prefix, use a digit-alphabet string or `{: radix, digits }` tuple:
 ```rix edu
 digits := "0123456789ABCDEF";
 formatted := 1199/16 _> digits;
-[formatted, formatted <_ digits];
+[formatted, formatted <_ digits] ##@ == ["4A..F/10", 1199/16];
 ```
 
 Prefixed values may be ordinary radix values, fractions, mixed numbers,
@@ -265,7 +272,7 @@ five := #101;
 decimal_one_hundred_one := 101;
 <* "x";
 hexadecimal := #face;
-{: five, decimal_one_hundred_one, hexadecimal };
+{: five, decimal_one_hundred_one, hexadecimal } ##@ == {: 5, 101, 64206 };
 ```
 
 The long equivalents are `.Config.NumInput("b")` and
@@ -307,7 +314,7 @@ source and fails when that guarantee cannot be met:
 ```rix edu
 source := (7/4) _>! 0b;
 recreated := @@source;
-{: source, recreated };
+{: source, recreated } ##@ == {: "0b111/0b100", 7/4 };
 ```
 
 RatCalc follows the same rule when you click an output to put it back into the
@@ -331,7 +338,7 @@ negabinary := #1111;
 <* "K";
 bijective := #AA;
 
-{: balanced, negabinary, bijective, (5/2) _> (0T, "/") };
+{: balanced, negabinary, bijective, (5/2) _> (0T, "/") } ##@ == {: 2, -5, 27, "1TT/1T" };
 ```
 
 The values are `2`, `-5`, and `27`; the last item is a balanced-ternary
@@ -350,7 +357,7 @@ value := #`++`;
 mixed := #`++`..#`+`/#`+0`;
 continued := #`++`.~#`+0`;
 source := (3/2) _>! 0P;
-{: value, mixed, continued, source, @@source };
+{: value, mixed, continued, source, @@source } ##@ == {: 3, 7/2, 7/2, source, 3/2 };
 ```
 
 Here `#` selects the active `P` system and the backticks make `++` one digit

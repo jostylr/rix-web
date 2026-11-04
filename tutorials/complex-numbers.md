@@ -11,6 +11,7 @@ The canonical imaginary generator is available from `.Exact` and `.Complex`:
 ```rix edu
 z := 3 + 4~{i};
 w := .Complex.FromParts(1, -2);
+w ##@ == 1 - 2~{i};
 {: z, w } ;
 ```
 
@@ -23,6 +24,8 @@ Division uses algebraic inversion rather than floating approximation:
 ```rix edu
 inverseI := 1 / .Exact[:i];
 quotient := (1 + .Exact[:i]) / (1 - .Exact[:i]);
+inverseI ##@ == -1~{i};
+quotient ##@ == 1~{i};
 {: inverseI, quotient } ;
 ```
 
@@ -36,6 +39,8 @@ Use the namespace operation or the receiver method:
 z := 3 + 4~{i};
 byNamespace := .Complex.Conjugate(z);
 byMethod := z.Conjugate();
+byMethod ##@ == 3 - 4~{i};
+byMethod.Conjugate() ##@ == z;
 {: byNamespace, byMethod } ;
 ```
 
@@ -47,7 +52,7 @@ Conjugating twice returns the original exact value.
 
 ```rix edu
 z := .Exact[:pi] + .Exact[:sqrt2] * .Exact[:i];
-{: .Complex.Re(z), .Complex.Im(z) } ;
+{: .Complex.Re(z), .Complex.Im(z) } ##@ == {: .Exact[:pi], .Exact[:sqrt2] } ;
 ```
 
 The result is `(pi, sqrt2)`, still exact.
@@ -58,7 +63,7 @@ Magnitude would require a square root. `NormSquared` avoids that decision:
 
 ```rix edu
 z := 3 + 4~{i};
-{: z.NormSquared(), .Complex.NormSquared(z) } ;
+{: z.NormSquared(), .Complex.NormSquared(z) } ##@ == {: 25, 25 } ;
 ```
 
 Both entries are exactly `25`. The next lesson introduces an exact magnitude

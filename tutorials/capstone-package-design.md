@@ -16,7 +16,7 @@ Prerequisites: [RiX scripts](rix-scripts.html), [Functions](functions.html), and
 ApplyTax(price, rate) -> price * (1 + rate);
 prices := [3 / 2, 2, 9 / 4];
 taxed := prices |>> (price) -> ApplyTax(price, 1 / 20);
-taxed ;
+taxed ##@ == [63/40, 21/10, 189/80];
 ```
 
 ## How the pieces fit

@@ -54,7 +54,7 @@ SignedIncoming = (right, subtract ?= _) ->
     SignedIncoming(3, 1),
     0 ?: "zero is truthy" ?_ "not selected",
     _ ?: "not selected" ?_ "null selects this branch"
-];
+] ##@ == [3, -3, "zero is truthy", "null selects this branch"];
 ```
 
 This was the fraction-port bug: a subtraction flag defaulted to `0`, so the
@@ -108,7 +108,7 @@ ReducePair = (numerator, denominator) ->
             {: @numerator // common, @denominator // common };
         };
 
-ReducePair(6, 8);
+ReducePair(6, 8) ##@ == {: 3, 4 };
 ```
 
 Notice that `common` stays bare: it belongs to the current branch block.
@@ -124,7 +124,8 @@ ReducePairByVariant(numerator, denominator) ?- [denominator == 0] /ZeroDenominat
 ReducePairByVariant(numerator, denominator) ?!- [common = PairGcd(numerator, denominator)] /Reduce/ =>
     {: numerator // common, denominator // common };
 
-[ReducePairByVariant(6, 8), ReducePairByVariant(-5, 0), ReducePairByVariant(0, 0)];
+[ReducePairByVariant(6, 8), ReducePairByVariant(-5, 0), ReducePairByVariant(0, 0)]
+    ##@ == [{: 3, 4 }, {: -1, 0 }, {: 0, 0 }];
 ```
 
 The first variant handles a zero denominator before `PairGcd` runs. In the second, preparation computes `common` once and makes it available to the body. There is no extra branch block, so `numerator` and `denominator` remain local parameter names; no `@` captures are needed. The strict `?!-` preparation also makes an unexpected `PairGcd` error visible. Both versions return `( 0, 0 )` for a zero numerator and denominator, matching JavaScript's `Math.sign(0)`.
@@ -172,7 +173,7 @@ WeightedSum = values -> {;
     total;
 };
 
-WeightedSum([1, 2, 3]);
+WeightedSum([1, 2, 3]) ##@ == 14;
 ```
 
 This distinction mattered in radix loops: remainder arrays and function
@@ -223,7 +224,7 @@ RecursiveSumSplit = values -> {;
         + RecursiveSum(values.Slice(half + 1));
 };
 
-RecursiveSum([1, 2, 3, 4]);
+RecursiveSum([1, 2, 3, 4]) ##@ == 10;
 ```
 
 The Cayley–Dickson implementation now uses this pattern for conjugation and
@@ -261,7 +262,7 @@ AdvancePair = (left, right) -> {;
     state;
 };
 
-AdvancePair(1, 1);
+AdvancePair(1, 1) ##@ == [3, 5];
 ```
 
 This also makes ownership obvious: the array is algorithm state; the values it
@@ -298,7 +299,7 @@ Classify = value ->
         ?_ "at or above"
         ?? "needs refinement";
 
-Classify(0.5?);
+Classify(0.5?) ##@ == "needs refinement";
 ```
 
 ## A compact translation checklist

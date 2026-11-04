@@ -12,7 +12,7 @@ An empty position inside an array is a hole. `?|` supplies a value only for a ho
 
 ```rix edu
 values := [1,,3];
-[values[2] ?| 99, _ ?| 99];
+[values[2] ?| 99, _ ?| 99] ##@ == [99, _];
 ```
 
 Do not confuse an unfilled existing slot with an out-of-range lookup: `values[4]` evaluates to `_`, so hole coalescing does not replace it. Compare the two yourself before relying on a default.

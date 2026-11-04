@@ -16,7 +16,8 @@ Prerequisites: [Arrays](arrays.html), [Pipes](pipes.html), and [Functions](funct
 measurements := [-1, 1 / 2, 3 / 2, 2];
 positive := measurements |>? (x) -> x > 0;
 squares := positive |>> (x) -> x ^ 2;
-squares ;
+positive ##@ == [1/2, 3/2, 2];
+squares ##@ == [1/4, 9/4, 4];
 ```
 
 ## How the pieces fit

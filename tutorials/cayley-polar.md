@@ -15,6 +15,7 @@ For `1 + i`, both coordinates stay algebraic:
 ```rix edu
 z := 1 + 1~{i};
 c := .Complex.Cayley(z);
+{: c.Magnitude(), c.Direction() } ##@ == {: 1~{sqrt2}, 1~{sqrt2} - 1 };
 {: c, c.Magnitude(), c.Direction() } ;
 ```
 
@@ -32,7 +33,7 @@ For Cartesian `x + iy`, RiX computes `r = sqrt(x^2 + y^2)` and
 c := .Complex.Cayley(5, 1/2);
 z := c.Cartesian();
 roundTrip := .Complex.Cayley(z);
-{: z, roundTrip } ;
+{: z, roundTrip } ##@ == {: 3 + 4~{i}, .Complex.Cayley(5, 1/2) } ;
 ```
 
 This reconstructs `3 + 4i`, and the round trip returns `Cayley(5, 1/2)`.
@@ -51,7 +52,8 @@ b := .Complex.Cayley(1 + 1~{i});
 product := a * b;
 quotient := a / b;
 cube := b^3;
-{: product.Cartesian(), quotient.Cartesian(), cube.Cartesian() } ;
+{: product.Cartesian(), quotient.Cartesian(), cube.Cartesian() }
+    ##@ == {: (3 + 4~{i}) * (1 + 1~{i}), (3 + 4~{i}) / (1 + 1~{i}), (1 + 1~{i})^3 } ;
 ```
 
 Multiplication, division, integer powers, reciprocal, negation, and conjugation
@@ -65,6 +67,9 @@ Cartesian bridge and returns the canonical Cayley result. This remains exact:
 a := (5 + 3~{i}).Cayley();
 b := 1/2 - 1/2 ~{i};
 product := a * b;
+product.Magnitude()^2 ##@ == 17;
+product.Direction() ##@ == 4 - product.Magnitude();
+product.Cartesian() ##@ == 4 - 1~{i};
 {: product, product.Cartesian() } ;
 ```
 
@@ -82,6 +87,7 @@ a := .Complex.Cayley(3 + 4~{i});
 b := .Complex.Cayley(1 + 2~{i});
 sum := a + b;
 difference := a - b;
+{: sum.Cartesian(), difference.Cartesian() } ##@ == {: 4 + 6~{i}, 2 + 2~{i} };
 {: sum, sum.Cartesian(), difference.Cartesian() } ;
 ```
 
@@ -92,7 +98,8 @@ methods reconstruct exact values only when requested.
 
 ```rix edu
 c := .Complex.Cayley(3 + 4~{i});
-{: c.Conjugate(), c.Re(), c.Im(), c.NormSquared(), c.Inverse().Cartesian() } ;
+{: c.Conjugate(), c.Re(), c.Im(), c.NormSquared(), c.Inverse().Cartesian() }
+    ##@ == {: .Complex.Cayley(5, -1/2), 3, 4, 25, 3/25 - 4/25 ~{i} } ;
 ```
 
 `Direction` is deliberately not called `Arg`: it is `tan(Arg/2)`, not an angle
@@ -107,6 +114,7 @@ direction, not floating-point infinity. RiX branches on it algebraically:
 negative := .Complex.Cayley(-1);
 positiveAgain := negative * negative;
 rotated := negative * .Complex.Cayley(1 + 1~{i});
+positiveAgain ##@ == .Complex.Cayley(1, 0);
 {: negative, positiveAgain, rotated.Cartesian() } ;
 ```
 
@@ -119,7 +127,7 @@ Create Cayley forms for `1 + i` and `1 - i`. Multiply them and confirm through
 
     a := .Complex.Cayley(1 + 1~{i});
     b := .Complex.Cayley(1 - 1~{i});
-    (a * b).Cartesian()
+    (a * b).Cartesian() ##@ == 2
 :::
 
 ## Current boundary

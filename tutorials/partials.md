@@ -10,7 +10,7 @@ Partial functions leave a callable shape behind. Operator aliases and numbered p
 
 ```rix edu
 Double := @*(_1, 2);
-Double(9);
+Double(9) ##@ == 18;
 ```
 
 `_1` stands for the argument supplied later; the result is 18. Compare this with the ordinary `Double(x) -> x * 2` in [Define and call](function-basics.html). Use the version that makes the calculation easier to read.

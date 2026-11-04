@@ -9,7 +9,7 @@ description: Start with value-producing blocks; revisit bounded loops after cell
 `{; ... }` groups statements and returns its last value. The result below is 6. A space after the sigil keeps the form clear.
 
 ```rix edu
-{; x := 2; y := 3; x * y };
+{; x := 2; y := 3; x * y } ##@ == 6;
 ```
 
 Maps (`{=`), sets (`{|`) and tuples (`{:`) have different meanings. Their focused [collection lessons](collections.html) explain how to choose one.

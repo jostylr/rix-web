@@ -55,6 +55,7 @@ FizzBuzz(n) ->
     n % 5 == 0 ?: "Buzz" ?_
     n;
 
+[FizzBuzz(9), FizzBuzz(10), FizzBuzz(30), FizzBuzz(7)] ##@ == ["Fizz", "Buzz", "FizzBuzz", 7];
 [1 |+ 1 |; 15] |>> (n) -> FizzBuzz(n);
 ```
 

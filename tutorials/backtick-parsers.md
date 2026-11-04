@@ -23,7 +23,7 @@ runs without escaping:
 
 ```rix edu
 text := ``:A `single` backtick can live here``;
-text ;
+text ##@ == "A `single` backtick can live here";
 ```
 
 ## Make a structural function
@@ -33,14 +33,14 @@ alphabetical, not first appearance.
 
 ```rix edu
 F := `.SArith.Fun:z + a * 10`;
-F(2, 3) ;
+F(2, 3) ##@ == 23;
 ```
 
 Give `Fun` an argument list when order or unused parameters are intentional:
 
 ```rix edu
 Ordered := `.SArith.Fun(y,x,unused):y - x`;
-Ordered(5, 2, 99) ;
+Ordered(5, 2, 99) ##@ == 3;
 ```
 
 All free symbols must be listed, but additional unused names are allowed.
@@ -50,7 +50,7 @@ assigned directly to an uppercase identifier infers the same conversion:
 
 ```rix edu
 G := `z + a * 10`;
-G(2, 3) ;
+G(2, 3) ##@ == 23;
 ```
 
 Captured names do not become parameters:
@@ -58,7 +58,7 @@ Captured names do not become parameters:
 ```rix edu
 coefficient := 4;
 Scaled := `x * @(coefficient + 1)`;
-Scaled(3) ;
+Scaled(3) ##@ == 15;
 ```
 
 If a function form has no free symbols, RiX creates a zero-argument constant
@@ -77,7 +77,7 @@ symbolic IR, and returns an executable polynomial.
 
 ```rix edu
 P := `.Poly:x^2 + 3/4 x^5 - 7`;
-P(2) ;
+P(2) ##@ == 21;
 ```
 
 Unsupported polynomial forms fail explicitly rather than switching to an
@@ -91,7 +91,7 @@ RiX code can construct that protocol object without host JavaScript:
 
 ```rix edu
 parser := .NotationParser((body, modifiers, info) -> body);
-parser.Parse("kept as text", [], {= }) ;
+parser.Parse("kept as text", [], {= }) ##@ == "kept as text";
 ```
 
 A trusted package can register the returned object as a system or plugin

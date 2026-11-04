@@ -14,7 +14,7 @@ makes the choice visible and reproducible:
 .RNG(:default, {= seed=77 });
 first := .RAND_NAME(12);
 .RNG(:default, {= seed=77 });
-{: first, .RAND_NAME(12) };
+{: first, .RAND_NAME(12) } ##@ == {: first, first };
 ```
 
 The two strings match because each `.RNG` call constructs a fresh generator.
@@ -42,6 +42,7 @@ Baseline := () -> {;
     .RNG(:default, {= seed=41 });
     {: .RAND_NAME(8), .RAND_NAME(8) }
 };
+OuterRun() ##@ == Baseline();
 {: OuterRun(), Baseline() };
 ```
 
@@ -60,7 +61,9 @@ Maker := (seed) -> {;
 };
 Left := Maker(5);
 Right := Maker(5);
-{: Left(), Left(), Right(), Right() };
+draws := {: Left(), Left(), Right(), Right() };
+{: draws[1], draws[2] } ##@ == {: draws[3], draws[4] };
+draws;
 ```
 
 The first and third strings match, as do the second and fourth. Each closure
@@ -76,6 +79,7 @@ and an optional tolerance:
 .RNG(:default, {= seed=456 });
 point := (0:1).Random({: 1, 1000 });
 parts := (0:1).RandomPartition({: 4, 1000 });
+parts.Len() ##@ == 4;
 {= point=point, partitions=parts };
 ```
 

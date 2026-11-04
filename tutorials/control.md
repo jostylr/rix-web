@@ -10,7 +10,7 @@ description: Choose a value, then group a few calculations in a block.
 
 ```rix edu
 x := -4;
-x > 0 ?: x ?_ -x;
+x > 0 ?: x ?_ -x ##@ == 4;
 ```
 
 Test `x := 4` as well. The [Ternaries and cases](ternaries.html) lesson covers several branches and the distinct undecided `?` result.
@@ -20,7 +20,7 @@ Test `x := 4` as well. The [Ternaries and cases](ternaries.html) lesson covers s
 `{; ... }` groups statements and returns its final value. The following block returns 6.
 
 ```rix edu
-{; width := 2; height := 3; width * height };
+{; width := 2; height := 3; width * height } ##@ == 6;
 ```
 
 [Brace containers](brace-containers.html) explains the other sigils and later loop mechanics. Loops that update state are best read after [Cells and assignment](cells.html); [Bounded simulation](capstone-simulation.html) uses both. [Deferred execution](deferred.html) is an advanced continuation.

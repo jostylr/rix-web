@@ -52,7 +52,9 @@ NewtonSqrt(n, tolerance, guess) ->
         guess ?_
         NewtonSqrt(n, tolerance, NewtonStep(n, guess));
 
-NewtonSqrt(2, 1 / 1000000, 1) ;
+root := NewtonSqrt(2, 1 / 1000000, 1);
+Gap(2, root) < 1 / 1000000 ##@ == 1;
+root ##@ == 665857/470832;
 ```
 
 ## Reading the RiX solution

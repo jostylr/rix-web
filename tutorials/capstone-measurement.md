@@ -16,7 +16,7 @@ Prerequisites: [Physical units](units.html) and [Exact generators](exact-generat
 ```rix edu
 radius := 5~[cm];
 circumference := 2 * .Exact[:pi] * radius;
-inMetres := .ConvertUnit(circumference, .Units[:m]);
+inMetres := .ConvertUnit(circumference, .Units[:m]) ##@ == circumference;
 {: radius, circumference, inMetres } ;
 ```
 

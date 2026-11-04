@@ -69,6 +69,7 @@ spec. Compile a single-output spec with `.Poly` when it is time to evaluate.
 
 ```rix edu
 P := .Poly({#x# x^2 - 4 });
+P(3) ##@ == 5;
 {: P, P(3) } ;
 ```
 
@@ -92,6 +93,7 @@ between two such functions therefore produces another spec-backed callable.
 F := x -> 2*x;
 G := t -> t^2 - 4;
 H := F*G;
+H(2, 3) ##@ == 20;
 {: H(2, 3), .Spec(H) } ;
 ```
 
@@ -113,7 +115,7 @@ executable functions. The quote forms connect to the same exact engine:
 ```rix edu
 F := x -> x^3;
 G := x -> 2*x;
-{: .Deriv(F, {#x})(4), F'(4), 'G(3) } ;
+{: .Deriv(F, {#x})(4), F'(4), 'G(3) } ##@ == {: 48, 48, 9 };
 ```
 
 Captured coefficients stay linked to the same cell. A derived function sees a
@@ -124,7 +126,7 @@ a := 2;
 F := x -> a*x^2;
 D := .Deriv(F, {#x});
 a ~= 3;
-{: F(2), D(2) } ;
+{: F(2), D(2) } ##@ == {: 12, 12 };
 ```
 
 ## Transformations are deliberate

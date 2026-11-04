@@ -10,7 +10,7 @@ Sets use the `{|` sigil. Repeated entries collapse to one member.
 
 ```rix edu
 choices := {| 1, 2, 2, 3 |};
-choices ;
+choices ##@ == {| 1, 2, 3 |};
 ```
 
 The result contains each value once. That makes sets a strong fit for membership and combination questions.
@@ -24,7 +24,7 @@ Unlike an array, a set does not promise meaningful order or preserve duplicates.
 ```rix edu
 warm := {| 1, 2 |};
 cool := {| 2, 3 |};
-warm.Union(cool) ;
+warm.Union(cool) ##@ == {| 1, 2, 3 |};
 ```
 
 Union keeps values present in either set. Intersection keeps only values present in both, while difference keeps values from the receiver that are absent from the other set.
@@ -32,7 +32,8 @@ Union keeps values present in either set. Intersection keeps only values present
 ```rix edu
 required := {| "read", "write", "share" |};
 granted := {| "read", "share", "admin" |};
-{: required.Intersect(granted), required.Diff(granted) } ;
+{: required.Intersect(granted), required.Diff(granted) }
+    ##@ == {: {| "read", "share" |}, {| "write" |} };
 ```
 
 Read the direction of `Diff` carefully: the example reports required permissions that are not granted. Reversing receiver and argument instead reports granted permissions that were not requested.
@@ -44,7 +45,8 @@ Read the direction of `Diff` carefully: the example reports required permissions
 ```rix edu
 original := {| 2, 3, 5 |};
 extended := original.Add(7);
-{: original, extended, extended.Has(7) } ;
+{: original, extended, extended.Has(7) }
+    ##@ == {: {| 2, 3, 5 |}, {| 2, 3, 5, 7 |}, 1 };
 ```
 
 Exact numeric equality governs membership, so equivalent rational spellings denote the same set member. The function chips below link the central set operations to their API descriptions and examples.

@@ -49,7 +49,7 @@ HasDivisor(n, d) ->
 
 IsPrime(n) -> n >= 2 && HasDivisor(n, 2) == 0;
 
-[2, |+1, |; 29] |>? (n) -> IsPrime(n) ;
+[2, |+1, |; 29] |>? (n) -> IsPrime(n) ##@ == [2, 3, 5, 7, 11, 13, 17, 19, 23, 29];
 ```
 
 ## Reading the RiX solution

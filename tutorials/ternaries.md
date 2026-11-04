@@ -11,7 +11,7 @@ The false and undecided branches are optional; each branch can be an expression 
 
 ```rix edu
 x := 7;
-x % 2 == 0 ?: "even" ?_ "odd";
+x % 2 == 0 ?: "even" ?_ "odd" ##@ == "odd";
 ```
 
 The result is `odd`. Change `x` to 8 and predict the other branch. Both branches produce values; neither changes a variable.
@@ -26,7 +26,7 @@ score := -2;
     score > 0 ? "positive";
     score < 0 ? "negative";
     "zero"
-} ;
+} ##@ == "negative";
 ```
 
 The case returns `negative`. Try zero and a positive score. This is enough branching for most first programs. The sections below are deeper reading for uncertain values, recovery and validation; they are not prerequisites for [Define and call](function-basics.html).
@@ -46,7 +46,7 @@ relation := x < 23.4565;
         ?: "certainly less"
         ?_ "certainly not less"
         ?? "not decided by this enclosure"
-];
+] ##@ == [?, "not decided by this enclosure"];
 ```
 
 The undecided value is not simply contagious. Strong three-state logic still
@@ -60,7 +60,7 @@ is true. Otherwise uncertainty remains:
     ? && 1,
     ? || 1,
     ? || _
-];
+] ##@ == [?, _, ?, 1, ?];
 ```
 
 Predicates, cases, assertions, loops, and guards never accept `?` as ordinary
@@ -74,7 +74,7 @@ checks that name from left to right:
 
 ```rix edu
 ReadScore = x -> x;
-ReadScore(7) ?- value: [value ? :Integer, value > 0] ;
+ReadScore(7) ?- value: [value ? :Integer, value > 0] ##@ == 7;
 ```
 
 On success, the result is the original candidate. If candidate evaluation,
@@ -90,7 +90,7 @@ ReadScore = x -> x;
     ReadScore(-3) ?- value: [value > 0];
     ReadScore(4) ?- value: [value > 0];
     5
-} ;
+} ##@ == 4;
 ```
 
 Use `?!-` for a fact that must hold. Gates can be mixed on the same candidate;
@@ -100,7 +100,7 @@ the first gate also decides what happens if evaluating the candidate throws:
 ReadScore = x -> x;
 ReadScore(4)
     ?- value: [value ? :Integer]
-    ?!- value: [value > 0] ;
+    ?!- value: [value > 0] ##@ == 4;
 ```
 
 Here a non-integer is a recoverable failure, while an integer that is not
@@ -109,7 +109,7 @@ follows the gate's soft or strict policy:
 
 ```rix edu
 pair := {: 2, -1 };
-pair ?- {: x, y }: [x + y == 1] ;
+pair ?- {: x, y }: [x + y == 1] ##@ == {: 2, -1 };
 ```
 
 Assignments use the same expression directly. A soft failure assigns `_`; a
@@ -118,7 +118,7 @@ strict failure throws before the assignment commits:
 ```rix edu
 ReadScore = x -> x;
 accepted := ReadScore(6) ?!- value: [value ? :Integer, value > 0];
-accepted ;
+accepted ##@ == 6;
 ```
 
 Two additional markers control undecided checks. `??-` makes undecided a soft
@@ -130,7 +130,7 @@ ReadScore = x -> x;
 [
     {? ReadScore(0.5?) ??- value: [value < 0.55]; :fallback },
     ReadScore(0.5?) ?- value: [value < 0.55]
-];
+] ##@ == [:fallback, ?];
 ```
 
 The first element is `:fallback`; the second remains `?`. Replace `??-` by

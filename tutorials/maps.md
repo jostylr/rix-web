@@ -10,7 +10,7 @@ A map is written with the `{=` sigil. Each entry has a key and an exact RiX valu
 
 ```rix edu
 recipe := {= flour=3 / 2, water=1, salt=1 / 40 };
-recipe.Get("flour") ;
+recipe.Get("flour") ##@ == 3/2;
 ```
 
 Maps make it clear what each value represents, even when several values have the same numeric type.
@@ -35,7 +35,7 @@ Like array methods, ordinary map methods return a new value. `Set`, `Remove`, `M
 ```rix edu
 base := {= flour=3 / 2, water=1 };
 finished := base.Set("salt", 1 / 20);
-{: base, finished };
+{: base, finished } ##@ == {: {= flour=3 / 2, water=1 }, {= flour=3 / 2, water=1, salt=1 / 20 } };
 ```
 
 `base` remains unchanged; `finished` has one more key. The tuple displays both records side by side. Once you have read [Pipes](pipes.html), you can map a map's values with `|>>`; the callback receives value first and key second, and the map keeps its keys.

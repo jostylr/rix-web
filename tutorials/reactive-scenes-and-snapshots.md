@@ -60,10 +60,11 @@ $elements.Push!(2);
 before := $count;
 $$elements.Touch();
 
-{: before, after=$count } ;
+{: before, after=$count } ##@ == {: 1, after=2 } ;
 ```
 
-The result is `{:= 1, after=2}`. `Touch()` neither copies nor validates the
+The result displays as `( 1, 2 )`: the count was still 1 before `Touch()`
+and is 2 after it. `Touch()` neither copies nor validates the
 collection; it is an explicit publication boundary, not a substitute for normal
 value replacement.
 

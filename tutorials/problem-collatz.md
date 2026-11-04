@@ -53,7 +53,7 @@ CollatzWithin(n, steps) ->
     steps == 0 ?: 0 ?_
     CollatzWithin(NextCollatz(n), steps - 1);
 
-CollatzWithin(27, 120) ;
+CollatzWithin(27, 120) ##@ == 1;
 ```
 
 ## Reading the RiX solution

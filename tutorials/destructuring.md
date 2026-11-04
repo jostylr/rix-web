@@ -10,7 +10,7 @@ Destructuring reads a structured source once and binds selected pieces outward. 
 
 ```rix edu
 [first, second, ...rest] := [1, 2, 3, 4];
-[first, second, rest];
+[first, second, rest] ##@ == [1, 2, [3, 4]];
 ```
 
 The first two names receive 1 and 2; `rest` receives `[3, 4]`. The source is read once. Remove one item from the right and predict the new rest array.
@@ -22,7 +22,7 @@ Map patterns name the entries to extract. This result shows `cash` and the exact
 ```rix edu
 entry := {= account="cash", amount=7/2 };
 {= account, amount } := entry;
-[account, amount];
+[account, amount] ##@ == ["cash", 7/2];
 ```
 
 More advanced patterns can rename keys or pull values from tuples and shaped data. [Shared ledger](capstone-ledger.html) uses this map form together with cell updates.

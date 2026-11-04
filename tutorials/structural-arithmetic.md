@@ -12,6 +12,7 @@ form, while an operator separated from both operands applies structural
 algebra.
 
 ```rix edu
+{: `6/4+2/4`.Head(), `6/4 + 2/4`.Render() } ##@ == {: :Sum, "8/4" };
 {: `6/4+2/4`, `6/4 + 2/4` } ;
 ```
 
@@ -20,12 +21,14 @@ their equal denominators and returns `8/4`, deliberately not reduced to `2`.
 Unequal denominators use a least common denominator while staying fractions:
 
 ```rix edu
+`1/2 + 1/3`.Render() ##@ == "5/6";
 `1/2 + 1/3` ;
 ```
 
 The distinction remains useful with symbols:
 
 ```rix edu
+{: `x+0`.Head(), `x + 0`.Head(), `3/4 + x`.Head() } ##@ == {: :Sum, :Symbol, :Sum };
 {: `x+0`, `x + 0`, `3/4 + x` } ;
 ```
 
@@ -80,6 +83,8 @@ them:
 Intervals demonstrate the attachment rule directly:
 
 ```rix edu
+`1:3`.Head() ##@ == :Interval;
+[`1 : 3`.Low(), `1 : 3`.High()] ##@ == [1, 3];
 {: `1:3`, `1 : 3` } ;
 ```
 
@@ -111,6 +116,7 @@ Spacing still selects construction versus application. A tight product keeps
 the written product; a spaced product uses the scoped multiplication law:
 
 ```rix edu
+`.SArith.Complex:i * i` ##@ == -1;
 {:
   `.SArith.Complex:i*i`,
   `.SArith.Complex:i * i`,
@@ -160,7 +166,7 @@ form := `x*2/x`;
   form.Arguments(),
   form.Render(),
   form.Inspect(),
-  form.Simplify(:x)
+  form.Simplify(:x) ##@ == 2
 } ;
 ```
 

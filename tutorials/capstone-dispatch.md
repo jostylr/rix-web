@@ -16,7 +16,7 @@ Prerequisites: [Define and call](function-basics.html), basic [Ternaries and cas
 Price(q) ?- [q > 0] => q * 9 / 10;
 Price(q) ?- [q == 0] => 0;
 Price(q) => Price(-q);
-{: Price(10), Price(0), Price(-5) } ;
+{: Price(10), Price(0), Price(-5) } ##@ == {: 9, 0, 9/2 };
 ```
 
 ## How the pieces fit
