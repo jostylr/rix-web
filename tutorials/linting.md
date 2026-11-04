@@ -435,6 +435,7 @@ path must remain behind an explicit edit flag.
 
 :::challenge Repair a mixed translation
 Lint this cell, repair every finding, and lint it again before running it.
+    ## lint-problem
     values = [1, 2, 3];
     total = 0;
     {@ index = 1; index <= values.Len(); {;

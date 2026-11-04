@@ -481,12 +481,12 @@ for the rate and a range for the interval. Add reactive text that uses both.
 
     $$rate := 3/4;
     $$window := 2:6;
-    $$view := .Fragment([
+    $$panel := .Fragment([
         .ControlPanel([
             .Controls.Input($$rate, "rate"),
             .Controls.Range($$window, 0:10, 1, "window")
         ], "Model"),
         .Text(@"rate = @{$rate}; window = @{$window}")
     ]);
-    $view ;
+    $panel ;
 :::

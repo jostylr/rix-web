@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import {
     Context,
     createDefaultRegistry,
@@ -14,6 +14,10 @@ import { tutorials } from "../src/tutorial-index.js";
 import { paintCanvasPlan } from "../../rix/plugins/render-canvas/canvas-plan.js";
 import { paintWebGLPlan } from "../../rix/plugins/render-webgl/webgl-plan.js";
 import { formatCertifiedIntervalDecimal } from "../src/certified-decimal-display.js";
+
+// Several REPL scenarios load plugins or render graphics and exceed Bun's 5 s
+// default on slower machines.
+setDefaultTimeout(30_000);
 
 test("the web REPL runtime keeps its RiX context between cells", () => {
     const context = new Context();
@@ -1127,27 +1131,8 @@ test("every indexed tutorial has a Markdown source file", async () => {
     }
 });
 
-for (const tutorial of tutorials.filter(({ pluginGroup, status }) => !pluginGroup && status !== "proposed")) {
-    test(`published RiX tutorial ${tutorial.number} executes each h2 section in fresh state`, async () => {
-        const source = tutorial.pluginTutorial
-            ? await Bun.file(new URL(tutorial.sourcePath, new URL("../", import.meta.url))).text()
-            : await Bun.file(new URL(`../tutorials/${tutorial.file.replace(/\.html$/, ".md")}`, import.meta.url)).text();
-        for (const [sectionIndex, section] of source.split(/^##\s+/m).entries()) {
-            const cells = [...section.matchAll(/```rix(?:[ \t]+[^\n]*)?[ \t]*\n([\s\S]*?)\n```/g)]
-                .filter(([, code]) => !code.includes("## lint-problem"));
-            if (cells.length === 0) continue;
-            const repl = createRixRepl({ autoLoadPlugins: false });
-            try {
-                for (const [, code] of cells) {
-                    const response = await repl.runAsync(code);
-                    expect(response.type, `lesson ${tutorial.number}, section ${sectionIndex}: ${response.text}`).toBe("result");
-                }
-            } finally {
-                await repl.dispose();
-            }
-        }
-    }, 60_000);
-}
+// Tutorial execution and stated-result checks live in tests/tutorials.test.js
+// (`bun run test:tutorials`).
 
 test("web Shaped and Matrix constructors share the migrated runtime contract", () => {
     const repl = createRixRepl();

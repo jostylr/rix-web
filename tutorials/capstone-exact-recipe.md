@@ -27,7 +27,15 @@ The first three names are inputs. The next two are derived values. Flour stays a
 
 ## Audit the calculation
 
-Start with flour: three halves of nine quarters is twenty-seven eighths. RatCalc may print a mixed form rather than a rounded decimal. Water follows a different path: multiplying its exact bounds by a positive batch count produces the interval `3/2:27/16`.
+Start with flour: three halves of nine quarters is twenty-seven eighths, which RiX prints in mixed form as `3..3/8` rather than as a rounded decimal. Water follows a different path: multiplying its exact bounds by a positive batch count produces the interval from `3/2` to `27/16`, printed as `1..1/2:1..11/16`. The checks below state both results; a `##@` check stops with an error if its claim is false.
+
+```rix edu
+batches := 3 / 2;
+flour := batches * 9 / 4;
+water := batches * (1:9/8);
+flour ##@ == 27/8;
+[water.Low(), water.High()] ##@ == [3/2, 27/16];
+```
 
 Change `batches` to 2 and predict both results before rerunning. To inspect the parts separately, replace the last line with `flour;` or `water;` and run the cell again.
 
