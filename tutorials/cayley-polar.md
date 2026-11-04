@@ -63,7 +63,7 @@ Cartesian bridge and returns the canonical Cayley result. This remains exact:
 
 ```rix edu
 a := (5 + 3~{i}).Cayley();
-b := 1/2 - 1/2~{i};
+b := 1/2 - 1/2 ~{i};
 product := a * b;
 {: product, product.Cartesian() } ;
 ```

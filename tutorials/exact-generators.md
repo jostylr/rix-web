@@ -18,7 +18,7 @@ The concise form again means lookup and multiplication:
 
 ```rix edu
 explicit := 3/2 * .Exact[:pi];
-concise := 3/2~{pi};
+concise := 3/2 ~{pi};
 explicit == concise ;
 ```
 
@@ -55,7 +55,7 @@ generator, such as `1 + pi`, is not currently inverted automatically.
 Exact expressions can be quantity magnitudes:
 
 ```rix edu
-halfTurn := 1/2~{pi}~[rad];
+halfTurn := 1/2 ~{pi}~[rad];
 diameter := 2~[m];
 halfTurn * diameter ;
 ```

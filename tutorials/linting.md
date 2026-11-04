@@ -215,13 +215,16 @@ $items := nextItems;
 {: $derived, $items };
 ```
 
-## Translation syntax: RX1701, RX1702, and RX1704 through RX1707
+## Translation syntax: RX1701, RX1702, and RX1704 through RX1709
 
 Lowercase `f(2)` is implicit multiplication, collections are one-based, braces
 create scope, and a bare uppercase callable can mean the function value rather
 than a call. Dense nested ternaries are valid but difficult to audit. Active
 base fractions must not accidentally mix `#` input with ordinary decimal
-input.
+input. A pipe written after an unparenthesised lambda body receives the
+function itself, because `->` binds tighter than a pipe. A factor written
+directly after a fraction joins its denominator: `1/2x` is `1/(2x)`, while
+`1/2 x` is half of `x`.
 
 Problem:
 
@@ -238,7 +241,9 @@ F(value) -> value + 1;
     1 ?: 2 ?_ 1 ?: 3 ?_ 1 ?: 4 ?_ 5,
     {; @x + 1; },
     F,
-    #101/11
+    #101/11,
+    values |>> ((v) -> [v, 2] |>: @*[2]),
+    1/2x
 ];
 ```
 
@@ -255,7 +260,9 @@ x = 2;
     {? x == 1 ? 2; x == 2 ? 3; 5 },
     x + 1,
     F(3),
-    #101/#11
+    #101/#11,
+    values |>> ((v) -> ([v, 2] |>: @*[2])),
+    0.5 x
 ];
 ```
 
